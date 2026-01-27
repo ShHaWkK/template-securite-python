@@ -8,7 +8,7 @@ def main():
 
     capture = Capture()
     capture.capture_traffic()
-    capture.analyse("tcp")
+    capture.analyse("all")
     summary = capture.get_summary()
 
     filename = "report.pdf"
