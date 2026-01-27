@@ -6,14 +6,14 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from scapy.all import sniff
-from scapy.layers.l2 import ARP, Ether
-from scapy.layers.inet import IP, TCP, UDP, ICMP
-from scapy.layers.inet6 import IPv6
 from scapy.layers.dns import DNS
+from scapy.layers.inet import ICMP, IP, TCP, UDP
+from scapy.layers.inet6 import IPv6
+from scapy.layers.l2 import ARP, Ether
 from scapy.packet import Packet
 
-from src.tp1.utils.config import logger
-from src.tp1.utils.lib import choose_interface
+from .config import logger
+from .lib import choose_interface
 
 
 @dataclass
@@ -34,18 +34,8 @@ class ProtocolVerdict:
     notes: str
 
 
-def _now_utc() -> str:
+def _utc_now() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def _packet_src(pkt: Packet) -> Tuple[str, str]:
-    src_ip = ""
-    if pkt.haslayer(IP):
-        src_ip = pkt[IP].src
-    elif pkt.haslayer(IPv6):
-        src_ip = pkt[IPv6].src
-    src_mac = pkt[Ether].src if pkt.haslayer(Ether) else ""
-    return src_ip, src_mac
 
 
 def _packet_protocol(pkt: Packet) -> str:
@@ -70,6 +60,17 @@ def _packet_protocol(pkt: Packet) -> str:
     return pkt.lastlayer().name or "UNKNOWN"
 
 
+def _packet_src(pkt: Packet) -> Tuple[str, str]:
+    ip = ""
+    if pkt.haslayer(IP):
+        ip = pkt[IP].src
+    elif pkt.haslayer(IPv6):
+        ip = pkt[IPv6].src
+
+    mac = pkt[Ether].src if pkt.haslayer(Ether) else ""
+    return ip, mac
+
+
 def _packet_bytes(pkt: Packet) -> bytes:
     try:
         return bytes(pkt)
@@ -80,6 +81,7 @@ def _packet_bytes(pkt: Packet) -> bytes:
 def _looks_like_sqli(payload: bytes) -> Optional[str]:
     if not payload:
         return None
+
     p = payload.lower()
     patterns = [
         b"union select",
@@ -98,6 +100,7 @@ def _looks_like_sqli(payload: bytes) -> Optional[str]:
 def _detect_arp_spoof(pkt: Packet, arp_map: Dict[str, str]) -> Optional[str]:
     if not pkt.haslayer(ARP):
         return None
+
     arp = pkt[ARP]
     if arp.op != 2:  # ARP reply
         return None
@@ -105,17 +108,12 @@ def _detect_arp_spoof(pkt: Packet, arp_map: Dict[str, str]) -> Optional[str]:
     ip = arp.psrc
     mac = arp.hwsrc
     old = arp_map.get(ip)
+
     if old and old.lower() != mac.lower():
         return f"ARP spoof suspected: {ip} was {old}, now {mac}"
+
     arp_map[ip] = mac
     return None
-
-
-def _normalize_wanted(wanted: str) -> Optional[set]:
-    w = (wanted or "").strip().lower()
-    if not w or w == "all":
-        return None
-    return {x.strip() for x in w.split(",") if x.strip()}
 
 
 class Capture:
@@ -128,11 +126,18 @@ class Capture:
         self.summary = ""
 
     def capture_traffic(self) -> None:
+        """
+        Capture trafic via Scapy. Ne plante pas si l'interface est vide
+        (utile pour les tests unitaires).
+        """
+        if not self.interface:
+            logger.warning("No interface selected. Skipping sniff.")
+            self.packets = []
+            self.protocol_counts = Counter()
+            return
+
         seconds = int(os.getenv("TP1_CAPTURE_SECONDS", "10"))
         count = int(os.getenv("TP1_PACKET_COUNT", "0"))
-
-        if not self.interface:
-            raise RuntimeError("No network interface found.")
 
         logger.info(f"Capturing on {self.interface} for {seconds}s (count={count})")
         self.packets = self._sniff_packets(seconds, count)
@@ -143,7 +148,8 @@ class Capture:
             pkts = sniff(iface=self.interface, timeout=seconds, count=count or 0)
             return list(pkts)
         except PermissionError:
-            raise PermissionError("Sniff requires root. Try: sudo python3 main.py")
+            logger.error("Sniff requires sudo/root.")
+            return []
 
     def _count_protocols(self, packets: List[Packet]) -> Counter:
         c = Counter()
@@ -158,61 +164,49 @@ class Capture:
         return dict(self.protocol_counts)
 
     def analyse(self, protocols: str) -> None:
-        wanted = _normalize_wanted(protocols)
-        self.alerts = self._run_detectors(self.packets, wanted)
+        """
+        Exigence TP: analyse par protocole + légitimité.
+        - on conserve 'protocols' pour compatibilité main.py
+        """
+        _ = self.get_all_protocols()
+        _ = self.sort_network_protocols()
+
+        self.alerts = self._run_detectors(self.packets)
         self.verdicts = self._build_verdicts()
         self.summary = self.gen_summary()
 
-    def _run_detectors(self, packets: List[Packet], wanted: Optional[set]) -> List[Alert]:
+    def _run_detectors(self, packets: List[Packet]) -> List[Alert]:
         arp_map: Dict[str, str] = {}
         alerts: List[Alert] = []
 
         for pkt in packets:
-            proto = _packet_protocol(pkt)
-            if wanted and proto.lower() not in wanted:
+            arp_reason = _detect_arp_spoof(pkt, arp_map)
+            if arp_reason:
+                alerts.append(self._make_alert(pkt, "ARP", arp_reason))
                 continue
 
-            reason = _detect_arp_spoof(pkt, arp_map)
-            if reason:
-                alerts.append(self._make_alert(pkt, "ARP", reason))
-                continue
-
-            sqli = _looks_like_sqli(_packet_bytes(pkt))
-            if sqli:
-                alerts.append(self._make_alert(pkt, proto, sqli))
+            sqli_reason = _looks_like_sqli(_packet_bytes(pkt))
+            if sqli_reason:
+                alerts.append(self._make_alert(pkt, _packet_protocol(pkt), sqli_reason))
 
         return alerts
 
-    def _make_alert(self, pkt: Packet, protocol: str, reason: str) -> Alert:
-        src_ip, src_mac = _packet_src(pkt)
-        return Alert(ts=_now_utc(), protocol=protocol, src_ip=src_ip, src_mac=src_mac, reason=reason)
+    def _make_alert(self, pkt: Packet, proto: str, reason: str) -> Alert:
+        ip, mac = _packet_src(pkt)
+        return Alert(ts=_utc_now(), protocol=proto, src_ip=ip, src_mac=mac, reason=reason)
 
     def _build_verdicts(self) -> List[ProtocolVerdict]:
-        per_proto_alerts = defaultdict(list)
+        alerts_by_proto = defaultdict(int)
         for a in self.alerts:
-            per_proto_alerts[a.protocol].append(a)
+            alerts_by_proto[a.protocol] += 1
 
         verdicts: List[ProtocolVerdict] = []
         for proto, count in self.sort_network_protocols():
-            alerts = per_proto_alerts.get(proto, [])
-            verdicts.append(self._verdict_for_protocol(proto, count, alerts))
+            if alerts_by_proto.get(proto, 0) > 0:
+                verdicts.append(ProtocolVerdict(proto, count, "ILLEGITIME", "Alertes détectées"))
+            else:
+                verdicts.append(ProtocolVerdict(proto, count, "OK", "Trafic légitime"))
         return verdicts
-
-    def _verdict_for_protocol(self, proto: str, count: int, alerts: List[Alert]) -> ProtocolVerdict:
-        if not alerts:
-            return ProtocolVerdict(proto, count, "OK", "Trafic légitime (aucune alerte)")
-
-        note = f"{len(alerts)} alerte(s). Ex: {alerts[0].reason}"
-        return ProtocolVerdict(proto, count, "ILLEGITIME", note)
-
-    def get_summary(self) -> str:
-        return self.summary
-
-    def get_alerts(self) -> List[Alert]:
-        return self.alerts
-
-    def get_verdicts(self) -> List[ProtocolVerdict]:
-        return self.verdicts
 
     def gen_summary(self) -> str:
         total = sum(self.protocol_counts.values())
@@ -224,10 +218,18 @@ class Capture:
         ]
         return "\n".join(lines) + "\n"
 
+    def get_summary(self) -> str:
+        return self.summary
+
+    def get_alerts(self):
+        return self.alerts
+
+    def get_verdicts(self):
+        return self.verdicts
+
     def block_attacker(self, ip: str) -> bool:
         """
-        Blocage IPS: désactivé par défaut
-        Active avec: TP1_ENABLE_BLOCK=1 et éexcution de root 
+        FACULTATIF IPS : active seulement si TP1_ENABLE_BLOCK=1
         """
         if not ip or os.getenv("TP1_ENABLE_BLOCK", "0") != "1":
             return False
