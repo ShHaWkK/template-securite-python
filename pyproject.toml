@@ -20,8 +20,11 @@ fpdf2 = "^2.8.1"
 pytest = "^8.3.5"
 reportlab = "^4.2.5"
 capstone = "^5.0.3"
-pylibemu = "^0.8.0"
 python-dotenv = "^1.0.1"
+pylibemu = {version = "^0.8.0", optional = true}
+
+[tool.poetry.extras]
+emulation = ["pylibemu"]
 
 [build-system]
 requires = ["poetry-core"]

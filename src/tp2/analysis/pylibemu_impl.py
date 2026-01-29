@@ -1,71 +1,68 @@
-from __future__ import annotations
+"""
+Module d'analyse de shellcode avec pylibemu.
 
-from typing import Optional
+Pylibemu est un wrapper Python pour libemu, une bibliothèque
+d'émulation x86 permettant de détecter et analyser les shellcodes.
+"""
+from __future__ import annotations
 
 
 def pylibemu_analyze(shellcode: bytes, max_steps: int = 10000000) -> str:
     """
     Analyse un shellcode avec pylibemu (émulateur x86).
-    
+
     Args:
-        shellcode: Le shellcode à analyser
+        shellcode: Le shellcode à analyser (bytes)
         max_steps: Nombre maximum d'instructions à émuler
-    
+
     Returns:
-        Une chaîne décrivant le résultat de l'émulation
+        Le profil d'exécution contenant les appels API Windows détectés
     """
     try:
         import pylibemu
     except ImportError:
-        return "(Pylibemu) non disponible: installez la dépendance 'pylibemu'."
+        return "(Pylibemu non disponible - exécutez: poetry install)"
 
     try:
+        # Instanciation de l'émulateur
         emulator = pylibemu.Emulator()
-        
-        # Préparer et exécuter l'émulation
+
+        # Détection du point d'entrée (GetPC heuristics)
         offset = emulator.shellcode_getpc_test(shellcode)
+
+        # Préparation et exécution de l'émulation
         emulator.prepare(shellcode, offset)
-        
-        # Exécuter l'émulation
         emulator.test(max_steps)
-        
-        # Récupérer le profil d'exécution (appels API Windows détectés)
+
+        # Récupération du profil d'exécution (appels API Windows)
         profile = emulator.emu_profile_output
-        
-        results = []
-        results.append(f"Offset de départ: {offset}")
-        results.append(f"Taille du shellcode: {len(shellcode)} octets")
-        
-        if profile:
-            results.append("\nAppels API détectés:")
-            # Parser et formater le profil
-            for line in profile.strip().split("\n"):
-                if line.strip():
-                    results.append(f"  {line.strip()}")
+
+        if profile and profile.strip():
+            # Le profil contient les appels API détectés
+            # Format: HMODULE LoadLibraryA(...), SOCKET WSASocket(...), etc.
+            return profile.strip()
         else:
-            results.append("\nAucun appel API Windows détecté.")
-            results.append("(Le shellcode peut être incomplet ou utiliser des techniques d'évasion)")
-        
-        return "\n".join(results)
-        
-    except AttributeError as e:
-        # Certaines versions de pylibemu ont une API différente
-        return _pylibemu_fallback(shellcode)
+            return (
+                f"Émulation terminée (offset={offset}, taille={len(shellcode)}B)\n"
+                "Aucun appel API Windows détecté.\n"
+                "Note: shellcode Linux ou techniques d'évasion possibles."
+            )
+
+    except AttributeError:
+        # API différente selon les versions de pylibemu
+        return _pylibemu_simple(shellcode)
     except Exception as e:
-        return f"(Pylibemu) erreur lors de l'émulation: {e}"
+        return f"Erreur pylibemu: {e}"
 
 
-def _pylibemu_fallback(shellcode: bytes) -> str:
-    """Fallback pour les versions plus anciennes de pylibemu."""
+def _pylibemu_simple(shellcode: bytes) -> str:
+    """Analyse simplifiée pour anciennes versions de pylibemu."""
     try:
         import pylibemu
-        
+
         emulator = pylibemu.Emulator()
         emulator.prepare(shellcode, len(shellcode))
-        
-        return (
-            f"Shellcode préparé pour émulation ({len(shellcode)} octets).\n"
-            "Note: Version de pylibemu limitée, profil d'exécution non disponible."
-        )
+
+        return f"Shellcode chargé ({len(shellcode)} octets) - profil non disponible"
     except Exception as e:
-        return f"(Pylibemu) erreur: {e}"
+        return f"Erreur pylibemu: {e}"

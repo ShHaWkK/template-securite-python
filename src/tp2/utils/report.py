@@ -18,6 +18,29 @@ class ShellcodeReportPDF(FPDF):
     def __init__(self):
         super().__init__()
         self.set_auto_page_break(auto=True, margin=15)
+    
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Remplace les caractères Unicode non supportés par des équivalents ASCII."""
+        replacements = {
+            "•": "-",
+            "→": "->",
+            "←": "<-",
+            "✓": "[OK]",
+            "✗": "[X]",
+            "⚠️": "[!]",
+            "⚠": "[!]",
+            "\u2022": "-",
+            "—": "--",
+            "–": "-",
+            "'": "'",
+            "'": "'",
+            """: '"',
+            """: '"',
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        return text
 
     def header(self):
         self.set_font("Helvetica", "B", 14)
@@ -55,8 +78,7 @@ class ShellcodeReportPDF(FPDF):
     def add_text(self, text: str, font_size: int = 10):
         """Ajoute du texte normal."""
         self.set_font("Helvetica", "", font_size)
-        # fpdf2 gère l'encodage UTF-8 nativement
-        self.multi_cell(0, 5, text)
+        self.multi_cell(0, 5, self._sanitize_text(text))
         self.ln(3)
 
     def add_code_block(self, code: str, max_lines: int = 50):
@@ -67,9 +89,10 @@ class ShellcodeReportPDF(FPDF):
         lines = code.split("\n")
         if len(lines) > max_lines:
             lines = lines[:max_lines]
-            lines.append(f"... ({len(code.split(chr(10))) - max_lines} lignes supplémentaires)")
+            lines.append(f"... ({len(code.split(chr(10))) - max_lines} lignes supplementaires)")
         
         for line in lines:
+            line = self._sanitize_text(line)
             # Tronquer les lignes trop longues
             if len(line) > 100:
                 line = line[:97] + "..."
@@ -127,7 +150,7 @@ def generate_shellcode_report(
     pdf.add_page()
 
     # Section: Informations générales
-    pdf.add_section_title("Informations Générales", color=(52, 73, 94))
+    pdf.add_section_title("Informations Generales", color=(52, 73, 94))
     pdf.add_key_value("Shellcode #", str(shellcode_index))
     pdf.add_key_value("Taille", f"{len(shellcode)} octets")
     pdf.add_key_value("Provider LLM", llm_provider.upper())
@@ -136,21 +159,21 @@ def generate_shellcode_report(
     pdf.ln(5)
 
     # Section: Chaînes détectées
-    pdf.add_section_title("Chaînes Détectées", color=(39, 174, 96))
+    pdf.add_section_title("Chaines Detectees", color=(39, 174, 96))
     if strings:
         for s in strings[:20]:  # Limiter à 20 chaînes
-            pdf.add_text(f"• {s}", font_size=9)
+            pdf.add_text(f"- {s}", font_size=9)
     else:
-        pdf.add_text("Aucune chaîne détectée dans le shellcode.", font_size=9)
+        pdf.add_text("Aucune chaine detectee dans le shellcode.", font_size=9)
     pdf.ln(3)
 
     # Section: Analyse Pylibemu
-    pdf.add_section_title("Analyse Pylibemu (Émulation)", color=(142, 68, 173))
+    pdf.add_section_title("Analyse Pylibemu (Emulation)", color=(142, 68, 173))
     pdf.add_text(pylibemu_out)
     pdf.ln(3)
 
     # Section: Désassemblage Capstone
-    pdf.add_section_title("Désassemblage (Capstone)", color=(230, 126, 34))
+    pdf.add_section_title("Desassemblage (Capstone)", color=(230, 126, 34))
     pdf.add_code_block(capstone_out, max_lines=60)
 
     # Section: Analyse LLM

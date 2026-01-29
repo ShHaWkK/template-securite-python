@@ -497,17 +497,6 @@ files = [
 windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
-name = "pylibemu"
-version = "0.8"
-description = "Libemu Python wrapper"
-optional = false
-python-versions = "*"
-groups = ["main"]
-files = [
-    {file = "pylibemu-0.8.tar.gz", hash = "sha256:cb3818d5e0023b3a78145a6c9f517237f7df451f74a40f3ae91a2589449b3a03"},
-]
-
-[[package]]
 name = "pytest"
 version = "8.4.2"
 description = "pytest: simple powerful testing with Python"
@@ -647,4 +636,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "12b39bc1fb67a4fdb4aac58c514b37cabf886457787c9c2500429d1ac79b329e"
+content-hash = "bab85ae9dcd8de2e448bb7959b18bc7f74f2517b98f4b44d012ae537e0c98ec5"

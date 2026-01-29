@@ -1,4 +1,4 @@
-# src/tp2/analysis/llm.py
+exe# src/tp2/analysis/llm.py
 from __future__ import annotations
 
 import os
@@ -89,8 +89,12 @@ def call_openai(prompt: str, system: str) -> str:
 
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        if r.status_code == 429:
+            return "(LLM/OpenAI) QUOTA DÉPASSÉ - Vérifie ton compte OpenAI: https://platform.openai.com/usage"
+        if r.status_code == 401:
+            return "(LLM/OpenAI) CLÉ API INVALIDE - Vérifie OPENAI_API_KEY dans .env"
         if r.status_code >= 400:
-            return f"(LLM/OpenAI) HTTP {r.status_code}: {r.text[:400]}"
+            return f"(LLM/OpenAI) HTTP {r.status_code}: {r.text[:300]}"
         data = r.json()
         text = _extract_openai_text(data)
         return text if text else "(LLM/OpenAI) réponse vide"
@@ -155,8 +159,12 @@ def call_gemini(prompt: str, system: str) -> str:
 
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        if r.status_code == 429:
+            return "(LLM/Gemini) QUOTA DÉPASSÉ - Vérifie ton compte Google AI: https://aistudio.google.com/apikey"
+        if r.status_code == 401 or r.status_code == 403:
+            return "(LLM/Gemini) CLÉ API INVALIDE - Vérifie GEMINI_API_KEY dans .env"
         if r.status_code >= 400:
-            return f"(LLM/Gemini) HTTP {r.status_code}: {r.text[:400]}"
+            return f"(LLM/Gemini) HTTP {r.status_code}: {r.text[:300]}"
         data = r.json()
         text = _extract_gemini_text(data)
         return text if text else "(LLM/Gemini) réponse vide"
