@@ -234,11 +234,22 @@ class Capture:
         if not ip or os.getenv("TP1_ENABLE_BLOCK", "0") != "1":
             return False
 
-        cmd = ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip, "drop"]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            logger.warning(f"Blocked attacker IP via nftables: {ip}")
-            return True
+            import platform
+            if platform.system().lower().startswith("win"):
+                cmds = [
+                    ["netsh", "advfirewall", "firewall", "add", "rule", "name", f"TP1_Block_In_{ip}", "dir", "in", "action", "block", "remoteip", ip],
+                    ["netsh", "advfirewall", "firewall", "add", "rule", "name", f"TP1_Block_Out_{ip}", "dir", "out", "action", "block", "remoteip", ip],
+                ]
+                for cmd in cmds:
+                    subprocess.run(cmd, check=True, capture_output=True, text=True)
+                logger.warning(f"Blocked attacker IP via Windows Firewall: {ip}")
+                return True
+            else:
+                cmd = ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip, "drop"]
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                logger.warning(f"Blocked attacker IP via nftables: {ip}")
+                return True
         except Exception as e:
             logger.error(f"Failed to block {ip}: {e}")
             return False
