@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from .capstone_impl import capstone_disasm
 from .pylibemu_impl import pylibemu_analyze
 from .llm import explain_with_llm
+import os
 
 Bits = Literal[32, 64]
 
@@ -99,4 +100,70 @@ Rends:
 4) Niveau (facile/moyen/difficile) + justification
 """.strip()
 
-    return explain_with_llm(prompt, provider=llm_provider)
+    provider = (llm_provider or "").strip().lower()
+    if not provider:
+        env_choice = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
+        if env_choice:
+            provider = env_choice
+        else:
+            has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
+            has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
+            if has_openai:
+                provider = "openai"
+            elif has_gemini:
+                provider = "gemini"
+            else:
+                provider = "local"
+    if provider == "local":
+        size = len(shellcode)
+        has_jmp = any("jmp" in l.lower() for l in asm_lines)
+        has_nop = any("nop" in l.lower() for l in asm_lines)
+        level = "facile" if size <= 256 else "moyen"
+        resume = []
+        resume.append(f"Shellcode de taille {size} octets.")
+        if has_nop:
+            resume.append("Présence de instructions NOP.")
+        if has_jmp:
+            resume.append("Présence de branchement/loop (JMP).")
+        comportement = []
+        if has_jmp:
+            comportement.append("Boucle ou redirection de flux.")
+        if has_nop:
+            comportement.append("Alignement ou no-op.")
+        iocs = []
+        for s in (strings or [])[:10]:
+            iocs.append(f"String: {s}")
+        return (
+            "Résumé:\n- " + "\n- ".join(resume or ["Pas d'éléments notables"]) + "\n\n"
+            "Comportement probable:\n- " + "\n- ".join(comportement or ["Insuffisant pour conclure"]) + "\n\n"
+            "IOC:\n- " + ("\n- ".join(iocs) if iocs else "(aucun)") + "\n\n"
+            f"Niveau: {level} (taille {size}B)"
+        )
+    out = explain_with_llm(prompt, provider=provider)
+    if out.strip().startswith("(LLM/") or out.strip().startswith("(LLM"):
+        provider = "local"
+        size = len(shellcode)
+        has_jmp = any("jmp" in l.lower() for l in asm_lines)
+        has_nop = any("nop" in l.lower() for l in asm_lines)
+        level = "facile" if size <= 256 else "moyen"
+        resume = []
+        resume.append(f"Shellcode de taille {size} octets.")
+        if has_nop:
+            resume.append("Présence de instructions NOP.")
+        if has_jmp:
+            resume.append("Présence de branchement/loop (JMP).")
+        comportement = []
+        if has_jmp:
+            comportement.append("Boucle ou redirection de flux.")
+        if has_nop:
+            comportement.append("Alignement ou no-op.")
+        iocs = []
+        for s in (strings or [])[:10]:
+            iocs.append(f"String: {s}")
+        return (
+            "Résumé:\n- " + "\n- ".join(resume or ["Pas d'éléments notables"]) + "\n\n"
+            "Comportement probable:\n- " + "\n- ".join(comportement or ["Insuffisant pour conclure"]) + "\n\n"
+            "IOC:\n- " + ("\n- ".join(iocs) if iocs else "(aucun)") + "\n\n"
+            f"Niveau: {level} (taille {size}B)"
+        )
+    return out

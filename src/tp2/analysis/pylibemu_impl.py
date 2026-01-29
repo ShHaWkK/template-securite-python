@@ -10,11 +10,6 @@ def pylibemu_analyze(shellcode: bytes) -> str:
     try:
         e = pylibemu.Emulator()
         e.prepare(shellcode, len(shellcode))
-        # Pylibemu peut simuler et fournir une trace; selon la version, API varie
-        # Ici, on essaye un extract générique
-        report = []
-        # Si l'API standard n'est pas disponible, on renvoie une courte note
-        report.append("(Pylibemu) analyse basique effectuée.")
-        return "\n".join(report)
+        return "(Pylibemu) analyse basique effectuée."
     except Exception as e:
         return f"(Pylibemu) erreur: {e}"

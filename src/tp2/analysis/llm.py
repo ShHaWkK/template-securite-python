@@ -176,15 +176,20 @@ def call_gemini(prompt: str, system: str) -> str:
 # -----------------------------
 
 def explain_with_llm(prompt: str, *, provider: Optional[str] = None) -> str:
-    """
-    Sélection via:
-      - provider (param)
-      - sinon env TP2_LLM_PROVIDER = openai | gemini
-    Modèles OpenAI demandés :
-      - OPENAI_MODEL=gpt-4o-mini (défaut)
-      - OPENAI_MODEL=gpt-4-turbo (si tu veux)
-    """
-    chosen = (provider or os.getenv("TP2_LLM_PROVIDER", "openai")).strip().lower()
+    env_choice = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
+    if provider:
+        chosen = provider.strip().lower()
+    elif env_choice:
+        chosen = env_choice
+    else:
+        has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
+        has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
+        if has_openai:
+            chosen = "openai"
+        elif has_gemini:
+            chosen = "gemini"
+        else:
+            chosen = "local"
 
     system = (
         "Tu es analyste shellcode/malware. Réponds en français, structuré et factuel.\n"
@@ -198,4 +203,4 @@ def explain_with_llm(prompt: str, *, provider: Optional[str] = None) -> str:
     if chosen == "gemini":
         return call_gemini(prompt, system)
 
-    return f"(LLM) provider inconnu: {chosen} (attendu: openai|gemini)"
+    return "(LLM/local) explication non connectée indisponible ici"

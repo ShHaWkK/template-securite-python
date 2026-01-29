@@ -18,7 +18,7 @@ def main() -> int:
         description="TP2 - Analyse de shellcodes",
     )
     parser.add_argument("-f", "--file", required=True, help="Fichier contenant le(s) shellcode(s).")
-    parser.add_argument("--provider", choices=["openai", "gemini"], help="Force le modèle IA (sinon .env).")
+    parser.add_argument("--provider", choices=["openai", "gemini", "local"], help="Force le modèle IA ")
     parser.add_argument("--no-llm", action="store_true", help="Désactive l'explication IA.")
     args = parser.parse_args()
 
