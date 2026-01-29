@@ -26,8 +26,7 @@ def get_shellcode_strings(shellcode: bytes, min_len: int = 4) -> list[str]:
             cur = bytearray()
     if len(cur) >= min_len:
         out.append(cur.decode("ascii", errors="ignore"))
-
-    # UTF-16LE (heuristique: printable + 0x00)
+        
     i = 0
     while i + 1 < len(shellcode):
         start = i

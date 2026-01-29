@@ -127,8 +127,7 @@ class Capture:
 
     def capture_traffic(self) -> None:
         """
-        Capture trafic via Scapy. Ne plante pas si l'interface est vide
-        (utile pour les tests unitaires).
+        Capture trafic via Scapy
         """
         if not self.interface:
             logger.warning("No interface selected. Skipping sniff.")
@@ -165,8 +164,7 @@ class Capture:
 
     def analyse(self, protocols: str) -> None:
         """
-        Exigence TP: analyse par protocole + légitimité.
-        - on conserve 'protocols' pour compatibilité main.py
+        analyse par protocole
         """
         _ = self.get_all_protocols()
         _ = self.sort_network_protocols()
@@ -175,7 +173,17 @@ class Capture:
         self.verdicts = self._build_verdicts()
         self.summary = self.gen_summary()
 
+
     def _run_detectors(self, packets: List[Packet]) -> List[Alert]:
+        """
+        Cette fonction permet de parse les paquets.
+        
+        :param self: Description
+        :param packets: Description
+        :type packets: List[Packet]
+        :return: Description
+        :rtype: List[Alert]
+        """
         arp_map: Dict[str, str] = {}
         alerts: List[Alert] = []
 
@@ -196,6 +204,7 @@ class Capture:
         return Alert(ts=_utc_now(), protocol=proto, src_ip=ip, src_mac=mac, reason=reason)
 
     def _build_verdicts(self) -> List[ProtocolVerdict]:
+        
         alerts_by_proto = defaultdict(int)
         for a in self.alerts:
             alerts_by_proto[a.protocol] += 1

@@ -38,34 +38,26 @@ def _safe_get(obj: Any, path: list[Any], default: Any = None) -> Any:
 
 
 # -----------------------------
-# OpenAI (Responses API)
+# OpenAI (Chat Completions API)
 # -----------------------------
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"      
-ALT_OPENAI_MODEL = "gpt-4-turbo"   
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 
 def _extract_openai_text(data: dict) -> str:
-    # Certaines réponses exposent directement output_text
-    out_text = data.get("output_text")
-    if isinstance(out_text, str) and out_text.strip():
-        return out_text.strip()
-
-    # Fallback: parcours "output" -> message -> content -> text
-    chunks: list[str] = []
-    for item in data.get("output", []) or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") != "message":
-            continue
-        for c in item.get("content", []) or []:
-            if not isinstance(c, dict):
-                continue
-            if c.get("type") in ("output_text", "text") and isinstance(c.get("text"), str):
-                chunks.append(c["text"])
-
-    return "\n".join(x for x in chunks if x.strip()).strip()
+    """Extrait le texte de la réponse Chat Completions."""
+    # Format standard: choices[0].message.content
+    choices = data.get("choices", [])
+    if choices and isinstance(choices, list):
+        first_choice = choices[0]
+        if isinstance(first_choice, dict):
+            message = first_choice.get("message", {})
+            if isinstance(message, dict):
+                content = message.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+    return ""
 
 
 def call_openai(prompt: str, system: str) -> str:
@@ -80,23 +72,24 @@ def call_openai(prompt: str, system: str) -> str:
     max_out = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 700)
     temperature = _env_float("OPENAI_TEMPERATURE", 0.2)
 
-    url = f"{base_url}/v1/responses"
+    url = f"{base_url}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
         "model": model,
-        "instructions": system,
-        "input": prompt,
-        "max_output_tokens": max_out,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": max_out,
         "temperature": temperature,
     }
 
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         if r.status_code >= 400:
-            # Retour court mais utile (évite d'imprimer des pages entières)
             return f"(LLM/OpenAI) HTTP {r.status_code}: {r.text[:400]}"
         data = r.json()
         text = _extract_openai_text(data)
@@ -172,7 +165,7 @@ def call_gemini(prompt: str, system: str) -> str:
 
 
 # -----------------------------
-# Public API (used by Analysis.py)
+# Public API (utilisé dans le fichier Analysis.py)
 # -----------------------------
 
 def explain_with_llm(prompt: str, *, provider: Optional[str] = None) -> str:
