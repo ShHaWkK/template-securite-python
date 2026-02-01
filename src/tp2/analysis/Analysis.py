@@ -1,271 +1,350 @@
-from __future__ import annotations
-
 import os
-from typing import Literal, Optional
+import re
 
-from tp2.analysis.capstone_impl import capstone_disasm
-from tp2.analysis.pylibemu_impl import pylibemu_analyze
-from tp2.analysis.llm import explain_with_llm
-
-Bits = Literal[32, 64]
+from .capstone_impl import capstone_disasm
+from .pylibemu_impl import pylibemu_analyze
+from .llm import explain_with_llm
 
 
-def get_shellcode_strings(shellcode: bytes, min_len: int = 4) -> list[str]:
-    def is_printable(b: int) -> bool:
-        return 32 <= b <= 126
+# APIs Windows connues
+WINDOWS_APIS = [
+    "loadlibrary", "getprocaddress", "virtualalloc", "createprocess",
+    "winexec", "shellexecute", "urldownload", "wsastartup", "socket",
+    "connect", "recv", "send", "createfile", "writefile", "readfile"
+]
 
-    out: list[str] = []
 
-    # ASCII
-    cur = bytearray()
-    for b in shellcode:
-        if is_printable(b):
-            cur.append(b)
+def get_shellcode_strings(shellcode, min_len=4):
+    """Extrait les chaines ASCII du shellcode."""
+    results = []
+    current = ""
+    
+    for byte in shellcode:
+        if 32 <= byte <= 126:
+            current += chr(byte)
         else:
-            if len(cur) >= min_len:
-                out.append(cur.decode("ascii", errors="ignore"))
-            cur = bytearray()
-    if len(cur) >= min_len:
-        out.append(cur.decode("ascii", errors="ignore"))
-        
-    i = 0
-    while i + 1 < len(shellcode):
-        start = i
-        chars = []
-        while i + 1 < len(shellcode):
-            c = shellcode[i]
-            z = shellcode[i + 1]
-            if z == 0x00 and is_printable(c):
-                chars.append(c)
-                i += 2
-            else:
-                break
-        if len(chars) >= min_len:
-            out.append(bytes(chars).decode("ascii", errors="ignore"))
-        i = (i + 2) if i == start else (i + 2)
-
-    # dédup stable
+            if len(current) >= min_len:
+                results.append(current)
+            current = ""
+    
+    if len(current) >= min_len:
+        results.append(current)
+    
+    # enlever doublons
     seen = set()
-    uniq = []
-    for s in out:
-        s2 = s.strip()
-        if s2 and s2 not in seen:
-            uniq.append(s2)
-            seen.add(s2)
-    return uniq
+    final = []
+    for s in results:
+        s = s.strip()
+        if s and s not in seen:
+            final.append(s)
+            seen.add(s)
+    
+    return final
 
 
-def get_pylibemu_analysis(shellcode: bytes) -> str:
+def get_pylibemu_analysis(shellcode):
+    """Lance l'analyse pylibemu."""
     return pylibemu_analyze(shellcode)
 
 
-def get_capstone_analysis(shellcode: bytes, bits: Bits = 32, base_addr: int = 0x1000) -> str:
+def get_capstone_analysis(shellcode, bits=32, base_addr=0x1000):
+    """Desassemble le shellcode avec capstone."""
     return capstone_disasm(shellcode, bits=bits, base_addr=base_addr)
 
 
-def get_llm_analysis(
-    shellcode: bytes,
-    bits: Bits = 32,
-    base_addr: int = 0x1000,
-    *,
-    strings: Optional[list[str]] = None,
-    pylibemu_out: Optional[str] = None,
-    capstone_out: Optional[str] = None,
-    llm_provider: Optional[str] = None,
-) -> str:
-    strings = strings if strings is not None else get_shellcode_strings(shellcode)
-    pylibemu_out = pylibemu_out if pylibemu_out is not None else get_pylibemu_analysis(shellcode)
-    capstone_out = capstone_out if capstone_out is not None else get_capstone_analysis(shellcode, bits=bits, base_addr=base_addr)
+# =============================================================================
+# FONCTIONS DE BASE - appelees par les autres
+# =============================================================================
 
-    # Prompt compact (optimisé coût/tokens)
-    asm_lines = capstone_out.splitlines()
-    asm_preview = "\n".join(asm_lines[:120])  # assez pour “comprendre” sans exploser les tokens
-
-    prompt = f"""
-Analyse un shellcode.
-
-Chaînes détectées:
-{strings if strings else "(aucune)"}
-
-Analyse pylibemu:
-{pylibemu_out}
-
-Désassemblage (extrait):
-{asm_preview}
-
-Rends:
-1) Résumé (5 lignes max)
-2) Comportement probable (API, DLL, process, commandes, réseau, fichiers)
-3) IOC (IP/port, chemins, strings, commandes)
-4) Niveau (facile/moyen/difficile) + justification
-""".strip()
-
-    provider = (llm_provider or "").strip().lower()
-    if not provider:
-        env_choice = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
-        if env_choice:
-            provider = env_choice
-        else:
-            has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
-            has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
-            if has_openai:
-                provider = "openai"
-            elif has_gemini:
-                provider = "gemini"
-            else:
-                provider = "local"
-    if provider == "local":
-        return _local_analysis(shellcode, asm_lines, strings)
-    out = explain_with_llm(prompt, provider=provider)
-    if out.strip().startswith("(LLM/") or out.strip().startswith("(LLM"):
-        # Afficher l'erreur LLM puis faire l'analyse locale
-        error_msg = out.strip()
-        local_analysis = _local_analysis(shellcode, asm_lines, strings)
-        return f"⚠️  {error_msg}\n\n--- Analyse locale (heuristique) ---\n\n{local_analysis}"
-    return out
-
-
-def _local_analysis(shellcode: bytes, asm_lines: list[str], strings: Optional[list[str]]) -> str:
-    """Analyse heuristique locale détaillée (sans LLM)."""
-    size = len(shellcode)
-    asm_lower = [l.lower() for l in asm_lines]
-    asm_text = "\n".join(asm_lower)
+def analyser_instructions(asm_lines):
+    """Cherche des patterns dans le code asm."""
+    asm_text = "\n".join(asm_lines).lower()
     
-    # Détection des patterns
-    has_nop = any("nop" in l for l in asm_lower)
-    has_jmp = any("jmp" in l for l in asm_lower)
-    has_call = any("call" in l for l in asm_lower)
-    has_push = any("push" in l for l in asm_lower)
-    has_pop = any("pop" in l for l in asm_lower)
-    has_xor = any("xor" in l for l in asm_lower)
-    has_int80 = "int 0x80" in asm_text or "int80" in asm_text
-    has_syscall = "syscall" in asm_text
-    has_sysenter = "sysenter" in asm_text
-    has_mov = any("mov" in l for l in asm_lower)
-    has_loop = any(x in asm_text for x in ["loop", "rep", "jne", "jnz", "je", "jz"])
-    has_stack_ops = has_push or has_pop or "esp" in asm_text or "rsp" in asm_text
-    
-    # Détection API Windows (par patterns dans strings)
-    windows_apis = []
-    linux_syscalls = []
-    suspicious_strings = []
-    network_indicators = []
-    file_indicators = []
+    return {
+        "nop": "nop" in asm_text,
+        "xor": "xor" in asm_text,
+        "call": "call" in asm_text,
+        "push": "push" in asm_text,
+        "pop": "pop" in asm_text,
+        "int80": "int 0x80" in asm_text,
+        "syscall": "syscall" in asm_text,
+        "loop": any(x in asm_text for x in ["loop", "jne", "jnz", "je", "jz"]),
+    }
+
+
+def detecter_indicateurs(strings):
+    """Detecte des indicateurs suspects dans les strings."""
+    apis = []
+    reseau = []
+    fichiers = []
+    commandes = []
     
     for s in (strings or []):
         sl = s.lower()
-        # APIs Windows
-        if any(api in sl for api in ["loadlibrary", "getprocaddress", "virtualalloc", "createprocess",
-                                       "winexec", "shellexecute", "urldownload", "wsastartup", "socket",
-                                       "connect", "recv", "send", "createfile", "writefile", "readfile"]):
-            windows_apis.append(s)
-        # Indicateurs réseau
-        if any(x in sl for x in ["http", "https", "ftp", "://", "www.", ".com", ".net", ".ru", ".cn"]):
-            network_indicators.append(s)
-        # Indicateurs fichiers
-        if any(x in sl for x in [".exe", ".dll", ".bat", ".ps1", ".vbs", "c:\\", "system32", "temp"]):
-            file_indicators.append(s)
-        # Strings suspectes
-        if any(x in sl for x in ["cmd", "powershell", "wget", "curl", "/bin/sh", "/bin/bash"]):
-            suspicious_strings.append(s)
+        
+        for api in WINDOWS_APIS:
+            if api in sl:
+                apis.append(s)
+                break
+        
+        if "http" in sl or "://" in sl or "www." in sl:
+            reseau.append(s)
+        
+        if ".exe" in sl or ".dll" in sl or "system32" in sl:
+            fichiers.append(s)
+        
+        if "cmd" in sl or "powershell" in sl or "/bin/sh" in sl:
+            commandes.append(s)
     
-    # Résumé
-    resume = [f"Shellcode de {size} octets ({len(asm_lines)} instructions désassemblées)."]
+    return apis, reseau, fichiers, commandes
+
+
+def calculer_niveau(patterns, size, apis):
+    """Calcule le niveau de difficulte."""
+    score = 0
     
-    if has_nop:
-        nop_count = sum(1 for l in asm_lower if "nop" in l)
-        resume.append(f"NOP sled détecté ({nop_count} NOP) - technique d'alignement/évasion.")
+    if patterns.get("xor"):
+        score += 2
+    if patterns.get("loop"):
+        score += 1
+    if patterns.get("call"):
+        score += 1
+    if size > 200:
+        score += 1
+    if size > 500:
+        score += 2
+    if apis:
+        score += 2
     
-    if has_xor:
-        xor_count = sum(1 for l in asm_lower if "xor" in l)
-        resume.append(f"XOR détecté ({xor_count}x) - possible décodage/chiffrement.")
-    
-    if has_int80 or has_syscall or has_sysenter:
-        resume.append("Appels système Linux détectés (int 0x80/syscall/sysenter).")
-    
-    if has_call and has_push:
-        resume.append("Pattern PUSH/CALL détecté - probable passage de paramètres.")
-    
-    # Comportement
-    comportement = []
-    
-    if has_int80 or has_syscall:
-        comportement.append("Exécution de syscalls Linux (shellcode Linux probable).")
-    
-    if windows_apis:
-        comportement.append(f"APIs Windows référencées: {', '.join(windows_apis[:5])}")
-    
-    if has_loop:
-        comportement.append("Boucle/itération détectée (possible décodage ou brute-force).")
-    
-    if has_stack_ops and has_call:
-        comportement.append("Manipulation de pile avec appels - structure de fonction.")
-    
-    if network_indicators:
-        comportement.append(f"Indicateurs réseau: {', '.join(network_indicators[:3])}")
-    
-    if file_indicators:
-        comportement.append(f"Indicateurs fichiers: {', '.join(file_indicators[:3])}")
-    
-    if suspicious_strings:
-        comportement.append(f"Commandes suspectes: {', '.join(suspicious_strings[:3])}")
-    
-    if not comportement:
-        if size < 50:
-            comportement.append("Shellcode court - possible stub ou shellcode simple.")
-        else:
-            comportement.append("Analyse heuristique insuffisante - examen manuel recommandé.")
-    
-    # IOC
+    if score <= 2:
+        return "facile"
+    elif score <= 5:
+        return "moyen"
+    return "difficile"
+
+
+def extraire_iocs(strings):
+    """Extrait les IOCs des strings."""
     iocs = []
-    for s in (strings or [])[:15]:
-        iocs.append(f"String: \"{s}\"")
+    ip_regex = re.compile(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}')
     
-    # Détecter IPs potentielles dans le shellcode
-    import re
-    ip_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
-    for s in (strings or []):
-        ips = ip_pattern.findall(s)
-        for ip in ips:
+    for s in (strings or [])[:10]:
+        iocs.append(f'String: "{s}"')
+        for ip in ip_regex.findall(s):
             iocs.append(f"IP: {ip}")
     
-    # Niveau de difficulté
-    complexity_score = 0
-    if has_xor: complexity_score += 2
-    if has_loop: complexity_score += 1
-    if has_call: complexity_score += 1
-    if size > 200: complexity_score += 1
-    if size > 500: complexity_score += 2
-    if windows_apis: complexity_score += 2
+    return iocs
+
+
+# =============================================================================
+# FONCTIONS QUI APPELLENT LES AUTRES
+# =============================================================================
+
+def generer_resume(patterns, size, nb_instructions):
+    """Genere le resume a partir des patterns detectes."""
+    resume = [f"Shellcode de {size} octets ({nb_instructions} instructions)"]
     
-    if complexity_score <= 2:
-        level = "facile"
-        level_reason = "shellcode simple, peu d'obfuscation"
-    elif complexity_score <= 5:
-        level = "moyen"
-        level_reason = "techniques d'encodage ou taille modérée"
+    if patterns["nop"]:
+        resume.append("NOP sled detecte")
+    if patterns["xor"]:
+        resume.append("XOR detecte (encodage probable)")
+    if patterns["int80"] or patterns["syscall"]:
+        resume.append("Syscalls Linux")
+    if patterns["call"] and patterns["push"]:
+        resume.append("Pattern PUSH/CALL")
+    
+    return resume
+
+
+def generer_comportement(patterns, apis, reseau, fichiers, commandes):
+    """Genere la liste des comportements detectes."""
+    comportement = []
+    
+    if patterns["int80"] or patterns["syscall"]:
+        comportement.append("Shellcode Linux (syscalls)")
+    if apis:
+        comportement.append(f"APIs Windows: {', '.join(apis[:3])}")
+    if reseau:
+        comportement.append(f"Indicateurs reseau: {', '.join(reseau[:2])}")
+    if fichiers:
+        comportement.append(f"Fichiers: {', '.join(fichiers[:2])}")
+    if commandes:
+        comportement.append(f"Commandes: {', '.join(commandes[:2])}")
+    if patterns["loop"]:
+        comportement.append("Boucle detectee")
+    if patterns["call"] and patterns["push"]:
+        comportement.append("Pattern PUSH/CALL")
+    
+    return comportement
+
+
+def analyser_shellcode(shellcode, asm_lines, strings):
+    """
+    Fonction centrale qui analyse le shellcode.
+    Appelee par toutes les autres fonctions d'analyse.
+    """
+    size = len(shellcode)
+    
+    # appel des fonctions de base
+    patterns = analyser_instructions(asm_lines)
+    apis, reseau, fichiers, commandes = detecter_indicateurs(strings)
+    niveau = calculer_niveau(patterns, size, apis)
+    iocs = extraire_iocs(strings)
+    
+    # generation du resume et comportement
+    resume = generer_resume(patterns, size, len(asm_lines))
+    comportement = generer_comportement(patterns, apis, reseau, fichiers, commandes)
+    
+    return {
+        "size": size,
+        "patterns": patterns,
+        "apis": apis,
+        "reseau": reseau,
+        "fichiers": fichiers,
+        "commandes": commandes,
+        "niveau": niveau,
+        "iocs": iocs,
+        "resume": resume,
+        "comportement": comportement,
+    }
+
+
+# =============================================================================
+# FONCTIONS PRINCIPALES - utilisent analyser_shellcode()
+# =============================================================================
+
+def construire_prompt(shellcode, strings, pylibemu_out, capstone_out):
+    """Construit le prompt pour le LLM."""
+    asm_lines = capstone_out.splitlines()
+    
+    # utilise la fonction centrale
+    analyse = analyser_shellcode(shellcode, asm_lines, strings)
+    
+    # extrait du desassemblage (100 lignes max)
+    asm_extrait = "\n".join(asm_lines[:100])
+    
+    prompt = f"""Analyse ce shellcode de {analyse['size']} octets.
+
+Strings: {strings if strings else "aucune"}
+
+Pylibemu:
+{pylibemu_out}
+
+Desassemblage:
+{asm_extrait}
+
+Resume: {', '.join(analyse['resume'])}
+Comportement: {', '.join(analyse['comportement']) if analyse['comportement'] else "a determiner"}
+IOC: {', '.join(analyse['iocs']) if analyse['iocs'] else "aucun"}
+Niveau estime: {analyse['niveau']}
+
+Donne moi:
+1) Resume en 5 lignes max
+2) Comportement (API, DLL, reseau, fichiers, commandes)
+3) IOC detectes
+4) Niveau de difficulte avec justification"""
+
+    return prompt, analyse
+
+
+def analyse_locale(shellcode, asm_lines, strings):
+    """Analyse sans LLM - utilise analyser_shellcode()."""
+    
+    # utilise la fonction centrale
+    analyse = analyser_shellcode(shellcode, asm_lines, strings)
+    
+    output = []
+    
+    # resume
+    output.append("1) RESUME")
+    for r in analyse["resume"]:
+        output.append(f"   {r}")
+    
+    # comportement
+    output.append("\n2) COMPORTEMENT")
+    if analyse["comportement"]:
+        for c in analyse["comportement"]:
+            output.append(f"   {c}")
     else:
-        level = "difficile"
-        level_reason = "multiple techniques, APIs complexes ou grande taille"
+        if analyse["size"] < 50:
+            output.append("   Shellcode court - stub ou payload simple")
+        else:
+            output.append("   Analyse manuelle recommandee")
     
-    # Formater le résultat
-    result = []
-    result.append("1) RÉSUMÉ")
-    for r in resume:
-        result.append(f"   • {r}")
-    
-    result.append("\n2) COMPORTEMENT PROBABLE")
-    for c in comportement:
-        result.append(f"   • {c}")
-    
-    result.append("\n3) IOC (Indicateurs de Compromission)")
-    if iocs:
-        for ioc in iocs[:10]:
-            result.append(f"   • {ioc}")
+    # IOC
+    output.append("\n3) IOC")
+    if analyse["iocs"]:
+        for ioc in analyse["iocs"][:10]:
+            output.append(f"   {ioc}")
     else:
-        result.append("   • (aucun détecté)")
+        output.append("   Aucun IOC detecte")
     
-    result.append(f"\n4) NIVEAU: {level.upper()}")
-    result.append(f"   Justification: {level_reason}")
+    # niveau
+    output.append(f"\n4) NIVEAU: {analyse['niveau'].upper()}")
+    if analyse["niveau"] == "facile":
+        output.append("   Shellcode simple, peu d'obfuscation")
+    elif analyse["niveau"] == "moyen":
+        output.append("   Techniques d'encodage ou taille moyenne")
+    else:
+        output.append("   Techniques multiples, APIs complexes")
     
-    return "\n".join(result)
+    return "\n".join(output)
+
+
+def get_llm_analysis(shellcode, bits=32, base_addr=0x1000, strings=None, 
+                     pylibemu_out=None, capstone_out=None, llm_provider=None):
+    """Analyse le shellcode avec un LLM ou en local."""
+    
+    # recuperer les donnees si pas fournies
+    if strings is None:
+        strings = get_shellcode_strings(shellcode)
+    if pylibemu_out is None:
+        pylibemu_out = get_pylibemu_analysis(shellcode)
+    if capstone_out is None:
+        capstone_out = get_capstone_analysis(shellcode, bits=bits, base_addr=base_addr)
+    
+    asm_lines = capstone_out.splitlines()
+    
+    # determiner le provider
+    provider = (llm_provider or "").strip().lower()
+    if not provider:
+        provider = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
+    if not provider:
+        if os.getenv("OPENAI_API_KEY", "").strip():
+            provider = "openai"
+        elif os.getenv("GEMINI_API_KEY", "").strip():
+            provider = "gemini"
+        else:
+            provider = "local"
+    
+    # si local, analyse sans LLM
+    if provider == "local":
+        return analyse_locale(shellcode, asm_lines, strings)
+    
+    # construire le prompt et appeler le LLM
+    prompt, _ = construire_prompt(shellcode, strings, pylibemu_out, capstone_out)
+    
+    result = explain_with_llm(prompt, provider=provider)
+    
+    # si erreur LLM, fallback sur analyse locale
+    if result.startswith("(LLM"):
+        local = analyse_locale(shellcode, asm_lines, strings)
+        return f"Erreur LLM: {result}\n\n--- Analyse locale ---\n\n{local}"
+    
+    return result
+
+
+# =============================================================================
+# FONCTION POUR LES TESTS
+# =============================================================================
+
+def _extract_analysis_hints(shellcode, asm_lines, strings):
+    """Pour les tests - utilise analyser_shellcode()."""
+    analyse = analyser_shellcode(shellcode, asm_lines, strings)
+    
+    return (
+        analyse["resume"],
+        analyse["comportement"],
+        analyse["iocs"],
+        analyse["niveau"]
+    )

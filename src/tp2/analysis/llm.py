@@ -1,207 +1,159 @@
-exe# src/tp2/analysis/llm.py
-from __future__ import annotations
-
+"""
+Module pour appeler les LLMs (OpenAI ou Gemini).
+"""
 import os
-from typing import Any, Optional
-
 import requests
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except Exception:
-        return default
+SYSTEM_PROMPT = """Tu es analyste shellcode/malware. Reponds en francais, structure et factuel.
+Objectif: expliquer le comportement (API/DLL, processus, reseau, fichiers, commandes) et les IOC.
+Interdit: donner des instructions d'exploitation, des payloads, ou des etapes pour attaquer.
+Reste cote analyse/defense."""
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except Exception:
-        return default
-
-
-def _safe_get(obj: Any, path: list[Any], default: Any = None) -> Any:
-    cur = obj
-    for key in path:
-        if isinstance(cur, dict) and key in cur:
-            cur = cur[key]
-        elif isinstance(cur, list) and isinstance(key, int) and 0 <= key < len(cur):
-            cur = cur[key]
-        else:
-            return default
-    return cur
-
-
-# -----------------------------
-# OpenAI (Chat Completions API)
-# -----------------------------
-
-DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-
-
-def _extract_openai_text(data: dict) -> str:
-    """Extrait le texte de la réponse Chat Completions."""
-    # Format standard: choices[0].message.content
-    choices = data.get("choices", [])
-    if choices and isinstance(choices, list):
-        first_choice = choices[0]
-        if isinstance(first_choice, dict):
-            message = first_choice.get("message", {})
-            if isinstance(message, dict):
-                content = message.get("content", "")
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
-    return ""
-
-
-def call_openai(prompt: str, system: str) -> str:
+def call_openai(prompt, system):
+    """Appelle l'API OpenAI."""
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return "(LLM/OpenAI) OPENAI_API_KEY manquante dans .env"
-
-    base_url = os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL).rstrip("/")
-    model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
-
-    timeout = _env_int("OPENAI_TIMEOUT", 60)
-    max_out = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 700)
-    temperature = _env_float("OPENAI_TEMPERATURE", 0.2)
-
+    
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
+    
     url = f"{base_url}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    payload = {
+    
+    data = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": max_out,
-        "temperature": temperature,
+        "max_tokens": 700,
+        "temperature": 0.2,
     }
-
+    
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        r = requests.post(url, json=data, headers=headers, timeout=60)
+        
         if r.status_code == 429:
-            return "(LLM/OpenAI) QUOTA DÉPASSÉ - Vérifie ton compte OpenAI: https://platform.openai.com/usage"
+            return "(LLM/OpenAI) QUOTA DEPASSE - verifie ton compte OpenAI"
         if r.status_code == 401:
-            return "(LLM/OpenAI) CLÉ API INVALIDE - Vérifie OPENAI_API_KEY dans .env"
+            return "(LLM/OpenAI) CLE API INVALIDE"
         if r.status_code >= 400:
-            return f"(LLM/OpenAI) HTTP {r.status_code}: {r.text[:300]}"
-        data = r.json()
-        text = _extract_openai_text(data)
-        return text if text else "(LLM/OpenAI) réponse vide"
+            return f"(LLM/OpenAI) Erreur HTTP {r.status_code}"
+        
+        resp = r.json()
+        text = _extract_openai_text(resp)
+        return text if text else "(LLM/OpenAI) reponse vide"
+        
     except Exception as e:
-        return f"(LLM/OpenAI) indisponible: {e}"
+        return f"(LLM/OpenAI) erreur: {e}"
 
 
-# -----------------------------
-# Gemini (Google AI Studio REST)
-# -----------------------------
-
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-
-
-def _extract_gemini_text(data: dict) -> str:
-    # Format courant: candidates[0].content.parts[0].text
-    t = _safe_get(data, ["candidates", 0, "content", "parts", 0, "text"])
-    if isinstance(t, str) and t.strip():
-        return t.strip()
-
-    # Fallback: concat tous les parts.text
-    chunks: list[str] = []
-    candidates = data.get("candidates") or []
-    if isinstance(candidates, list):
-        for cand in candidates:
-            parts = _safe_get(cand, ["content", "parts"], default=[])
-            if isinstance(parts, list):
-                for p in parts:
-                    if isinstance(p, dict) and isinstance(p.get("text"), str):
-                        chunks.append(p["text"])
-    return "\n".join(x for x in chunks if x.strip()).strip()
-
-
-def call_gemini(prompt: str, system: str) -> str:
+def call_gemini(prompt, system):
+    """Appelle l'API Gemini."""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         return "(LLM/Gemini) GEMINI_API_KEY manquante dans .env"
-
-    model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
-    timeout = _env_int("GEMINI_TIMEOUT", 60)
-    max_out = _env_int("GEMINI_MAX_OUTPUT_TOKENS", 700)
-    temperature = _env_float("GEMINI_TEMPERATURE", 0.2)
-
-    # Google AI Studio Gemini API (Generative Language API)
+    
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    
     headers = {
         "x-goog-api-key": api_key,
         "Content-Type": "application/json",
     }
-    payload = {
-        "systemInstruction": {
-            "parts": [{"text": system}],
-        },
-        "contents": [
-            {"role": "user", "parts": [{"text": prompt}]},
-        ],
+    
+    data = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_out,
+            "temperature": 0.2,
+            "maxOutputTokens": 700,
         },
     }
-
+    
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        r = requests.post(url, json=data, headers=headers, timeout=60)
+        
         if r.status_code == 429:
-            return "(LLM/Gemini) QUOTA DÉPASSÉ - Vérifie ton compte Google AI: https://aistudio.google.com/apikey"
-        if r.status_code == 401 or r.status_code == 403:
-            return "(LLM/Gemini) CLÉ API INVALIDE - Vérifie GEMINI_API_KEY dans .env"
+            return "(LLM/Gemini) QUOTA DEPASSE"
+        if r.status_code in [401, 403]:
+            return "(LLM/Gemini) CLE API INVALIDE"
         if r.status_code >= 400:
-            return f"(LLM/Gemini) HTTP {r.status_code}: {r.text[:300]}"
-        data = r.json()
-        text = _extract_gemini_text(data)
-        return text if text else "(LLM/Gemini) réponse vide"
+            return f"(LLM/Gemini) Erreur HTTP {r.status_code}"
+        
+        resp = r.json()
+        text = _extract_gemini_text(resp)
+        return text if text else "(LLM/Gemini) reponse vide"
+        
     except Exception as e:
-        return f"(LLM/Gemini) indisponible: {e}"
+        return f"(LLM/Gemini) erreur: {e}"
 
 
-# -----------------------------
-# Public API (utilisé dans le fichier Analysis.py)
-# -----------------------------
+def _extract_openai_text(data):
+    """Extrait le texte de la reponse OpenAI."""
+    try:
+        choices = data.get("choices", [])
+        if choices:
+            msg = choices[0].get("message", {})
+            content = msg.get("content", "")
+            return content.strip()
+    except:
+        pass
+    return ""
 
-def explain_with_llm(prompt: str, *, provider: Optional[str] = None) -> str:
-    env_choice = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
+
+def _extract_gemini_text(data):
+    """Extrait le texte de la reponse Gemini."""
+    try:
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                return parts[0].get("text", "").strip()
+    except:
+        pass
+    return ""
+
+
+def _safe_get(obj, path, default=None):
+    """Navigue dans un dict/list de maniere safe."""
+    current = obj
+    for key in path:
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        elif isinstance(current, list) and isinstance(key, int) and 0 <= key < len(current):
+            current = current[key]
+        else:
+            return default
+    return current
+
+
+def explain_with_llm(prompt, provider=None):
+    """Fonction principale pour appeler un LLM."""
+    
+    # determiner le provider
     if provider:
         chosen = provider.strip().lower()
-    elif env_choice:
-        chosen = env_choice
     else:
-        has_openai = bool(os.getenv("OPENAI_API_KEY", "").strip())
-        has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
-        if has_openai:
+        env_provider = os.getenv("TP2_LLM_PROVIDER", "").strip().lower()
+        if env_provider:
+            chosen = env_provider
+        elif os.getenv("OPENAI_API_KEY", "").strip():
             chosen = "openai"
-        elif has_gemini:
+        elif os.getenv("GEMINI_API_KEY", "").strip():
             chosen = "gemini"
         else:
             chosen = "local"
-
-    system = (
-        "Tu es analyste shellcode/malware. Réponds en français, structuré et factuel.\n"
-        "Objectif: expliquer le comportement (API/DLL, processus, réseau, fichiers, commandes) et les IOC.\n"
-        "Interdit: donner des instructions d'exploitation, des payloads, ou des étapes opératoires pour attaquer.\n"
-        "Reste côté analyse/défense."
-    )
-
+    
     if chosen == "openai":
-        return call_openai(prompt, system)
-    if chosen == "gemini":
-        return call_gemini(prompt, system)
-
-    return "(LLM/local) explication non connectée indisponible ici"
+        return call_openai(prompt, SYSTEM_PROMPT)
+    elif chosen == "gemini":
+        return call_gemini(prompt, SYSTEM_PROMPT)
+    else:
+        return "(LLM/local) pas de LLM configure, analyse locale uniquement"

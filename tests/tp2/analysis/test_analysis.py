@@ -230,7 +230,8 @@ class TestExtractAnalysisHints:
         resume, comportement, iocs, level = _extract_analysis_hints(shellcode, asm_lines, strings)
 
         # Then
-        assert any("réseau" in c.lower() or "network" in c.lower() for c in comportement)
+        # le code utilise "reseau" sans accent
+        assert any("reseau" in c.lower() or "network" in c.lower() for c in comportement)
 
     def test_when_shellcode_is_small_then_level_is_facile(self):
         # Given
