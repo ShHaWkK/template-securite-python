@@ -2,85 +2,168 @@
 Tests pour le module session.
 """
 from unittest.mock import MagicMock, patch
-from src.tp3.utils.session import Session
+from src.tp3.utils.session import ChallengeSession
 
 
-def test_session_init():
+def test_challenge_session_init():
+    """Test l'initialisation d'une session de challenge."""
     # Given
-    url = "http://example.com/captcha1/"
+    challenge_num = 1
 
     # When
-    session = Session(url)
+    session = ChallengeSession(challenge_num)
 
     # Then
-    assert session.url == url
-    assert session.captcha_value == ""
-    assert session.flag_value == ""
-    assert session.valid_flag == ""
+    assert session.challenge_num == 1
+    assert session.url.endswith("/captcha1/")
+    assert session.flag_min == 1000
+    assert session.flag_max == 2000
+    assert session.needs_captcha is False
+    assert session.found_flag is None
+    assert session.flag_string is None
 
 
-def test_submit_request_sans_captcha():
+def test_challenge_session_init_ch5():
+    """Test l'initialisation pour le challenge 5."""
     # Given
-    session = Session("http://example.com/captcha1/")
-    session.captcha_value = ""
+    challenge_num = 5
 
     # When
-    session.submit_request()
+    session = ChallengeSession(challenge_num)
 
     # Then
-    assert session.response is None
+    assert session.challenge_num == 5
+    assert session.url.endswith("/captcha5/")
+    assert session.flag_min == 8000
+    assert session.flag_max == 9000
+    assert session.needs_captcha is True
+    assert "Magic-Word" in session.headers
 
 
-def test_submit_request_avec_captcha():
+def test_create_session():
+    """Test la creation d'une session HTTP."""
     # Given
-    session = Session("http://example.com/captcha1/")
-    session.html = '<input name="captcha">'
-    session.captcha_value = "ABC123"
-    session.session = MagicMock()
+    challenge = ChallengeSession(1)
 
     # When
-    session.submit_request()
+    session = challenge._create_session()
 
     # Then
-    session.session.post.assert_called_once()
+    assert session is not None
+    assert "User-Agent" in session.headers
 
 
-def test_process_response_avec_flag():
+def test_get_post_headers():
+    """Test la generation des headers POST."""
     # Given
-    session = Session("http://example.com/captcha1/")
-    mock_response = MagicMock()
-    mock_response.text = '<html>Bravo! flag{test_flag_123}</html>'
-    session.response = mock_response
+    challenge = ChallengeSession(1)
 
     # When
-    result = session.process_response()
+    headers = challenge._get_post_headers()
+
+    # Then
+    assert "Content-Type" in headers
+    assert headers["Content-Type"] == "application/x-www-form-urlencoded"
+    assert "Referer" in headers
+
+
+def test_extract_flag_format_standard():
+    """Test l'extraction d'un flag format standard."""
+    # Given
+    challenge = ChallengeSession(1)
+    html = "<html>Bravo! FLAG-1{test_flag}</html>"
+
+    # When
+    result = challenge._extract_flag(html)
+
+    # Then
+    assert result == "FLAG-1{test_flag}"
+
+
+def test_extract_flag_avec_espaces():
+    """Test l'extraction d'un flag avec espaces (challenge 5)."""
+    # Given
+    challenge = ChallengeSession(5)
+    html = "<html>F L A G - 5 {Th3_l4st_0n3}</html>"
+
+    # When
+    result = challenge._extract_flag(html)
+
+    # Then
+    assert result is not None
+    assert "Th3_l4st_0n3" in result
+
+
+def test_extract_flag_absent():
+    """Test l'extraction quand pas de flag."""
+    # Given
+    challenge = ChallengeSession(1)
+    html = "<html>Incorrect flag</html>"
+
+    # When
+    result = challenge._extract_flag(html)
+
+    # Then
+    assert result is None
+
+
+def test_is_success_avec_correct():
+    """Test la detection de succes avec 'Correct'."""
+    # Given
+    challenge = ChallengeSession(1)
+    response = MagicMock()
+    response.text = "<html>Correct! You found it!</html>"
+    response.headers = {}
+
+    # When
+    result = challenge._is_success(response)
 
     # Then
     assert result is True
-    assert "flag{test_flag_123}" in session.valid_flag
 
 
-def test_process_response_echec():
+def test_is_success_avec_incorrect():
+    """Test la detection d'echec avec 'Incorrect'."""
     # Given
-    session = Session("http://example.com/captcha1/")
-    mock_response = MagicMock()
-    mock_response.text = '<html>Wrong answer</html>'
-    session.response = mock_response
+    challenge = ChallengeSession(1)
+    response = MagicMock()
+    response.text = "<html>Incorrect flag</html>"
+    response.headers = {}
 
     # When
-    result = session.process_response()
+    result = challenge._is_success(response)
 
     # Then
     assert result is False
 
 
-def test_get_flag():
+def test_is_success_content_length():
+    """Test la detection de succes par Content-Length."""
     # Given
-    session = Session("http://example.com/captcha1/")
-    session.valid_flag = "FLAG{abc123}"
+    challenge = ChallengeSession(1)
+    response = MagicMock()
+    response.text = "<html>Some content</html>"
+    response.headers = {"Content-Length": "588"}
 
     # When
-    result = session.get_flag()
+    result = challenge._is_success(response, expected_cl="588")
 
     # Then
-    assert result == "FLAG{abc123}"
+    assert result is True
+
+
+def test_get_result():
+    """Test la recuperation des resultats."""
+    # Given
+    challenge = ChallengeSession(1)
+    challenge.found_flag = 1337
+    challenge.flag_string = "FLAG-1{test}"
+
+    # When
+    result = challenge.get_result()
+
+    # Then
+    assert result["challenge"] == 1
+    assert result["flag_value"] == 1337
+    assert result["flag_string"] == "FLAG-1{test}"
+    assert "url" in result
