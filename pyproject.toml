@@ -24,6 +24,7 @@ python-dotenv = "^1.0.1"
 pylibemu = {version = "^0.8.0", optional = true}
 pillow = "^10.0.0"
 pytesseract = "^0.3.10"
+pwntools = "^4.15.0"
 
 [tool.poetry.extras]
 emulation = ["pylibemu"]
