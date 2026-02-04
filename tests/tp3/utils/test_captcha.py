@@ -1,7 +1,8 @@
 """
 Tests pour le module captcha.
 """
-from unittest.mock import MagicMock, patch
+
+from unittest.mock import MagicMock
 from src.tp3.utils.captcha import Captcha, solve_captcha
 
 

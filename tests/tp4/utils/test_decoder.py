@@ -1,7 +1,7 @@
 """
 Tests pour le module decoder du TP4.
 """
-import pytest
+
 from src.tp4.utils.decoder import (
     decode_base64,
     decode_hex,

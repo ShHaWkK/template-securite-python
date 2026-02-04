@@ -1,6 +1,7 @@
 """
 Module pour appeler les LLMs (OpenAI ou Gemini).
 """
+
 import os
 import requests
 
@@ -16,16 +17,16 @@ def call_openai(prompt, system):
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return "(LLM/OpenAI) OPENAI_API_KEY manquante dans .env"
-    
+
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
-    
+
     url = f"{base_url}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    
+
     data = {
         "model": model,
         "messages": [
@@ -35,21 +36,21 @@ def call_openai(prompt, system):
         "max_tokens": 700,
         "temperature": 0.2,
     }
-    
+
     try:
         r = requests.post(url, json=data, headers=headers, timeout=60)
-        
+
         if r.status_code == 429:
             return "(LLM/OpenAI) QUOTA DEPASSE - verifie ton compte OpenAI"
         if r.status_code == 401:
             return "(LLM/OpenAI) CLE API INVALIDE"
         if r.status_code >= 400:
             return f"(LLM/OpenAI) Erreur HTTP {r.status_code}"
-        
+
         resp = r.json()
         text = _extract_openai_text(resp)
         return text if text else "(LLM/OpenAI) reponse vide"
-        
+
     except Exception as e:
         return f"(LLM/OpenAI) erreur: {e}"
 
@@ -59,15 +60,15 @@ def call_gemini(prompt, system):
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         return "(LLM/Gemini) GEMINI_API_KEY manquante dans .env"
-    
+
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    
+
     headers = {
         "x-goog-api-key": api_key,
         "Content-Type": "application/json",
     }
-    
+
     data = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -76,21 +77,21 @@ def call_gemini(prompt, system):
             "maxOutputTokens": 700,
         },
     }
-    
+
     try:
         r = requests.post(url, json=data, headers=headers, timeout=60)
-        
+
         if r.status_code == 429:
             return "(LLM/Gemini) QUOTA DEPASSE"
         if r.status_code in [401, 403]:
             return "(LLM/Gemini) CLE API INVALIDE"
         if r.status_code >= 400:
             return f"(LLM/Gemini) Erreur HTTP {r.status_code}"
-        
+
         resp = r.json()
         text = _extract_gemini_text(resp)
         return text if text else "(LLM/Gemini) reponse vide"
-        
+
     except Exception as e:
         return f"(LLM/Gemini) erreur: {e}"
 
@@ -103,7 +104,7 @@ def _extract_openai_text(data):
             msg = choices[0].get("message", {})
             content = msg.get("content", "")
             return content.strip()
-    except:
+    except Exception:
         pass
     return ""
 
@@ -116,7 +117,7 @@ def _extract_gemini_text(data):
             parts = candidates[0].get("content", {}).get("parts", [])
             if parts:
                 return parts[0].get("text", "").strip()
-    except:
+    except Exception:
         pass
     return ""
 
@@ -136,7 +137,7 @@ def _safe_get(obj, path, default=None):
 
 def explain_with_llm(prompt, provider=None):
     """Fonction principale pour appeler un LLM."""
-    
+
     # determiner le provider
     if provider:
         chosen = provider.strip().lower()
@@ -150,7 +151,7 @@ def explain_with_llm(prompt, provider=None):
             chosen = "gemini"
         else:
             chosen = "local"
-    
+
     if chosen == "openai":
         return call_openai(prompt, SYSTEM_PROMPT)
     elif chosen == "gemini":

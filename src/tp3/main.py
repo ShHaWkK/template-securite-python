@@ -2,151 +2,83 @@
 TP3 - Captcha Solver
 ====================
 
-Resout 5 challenges de contournement de CAPTCHA avec differentes techniques:
+5 challenges de contournement de CAPTCHA.
 
-- Challenge 1: Bypass sans captcha (bruteforce simple)
-- Challenge 2: OCR + detection par Content-Length
-- Challenge 3: OCR + detection par Content-Length
-- Challenge 4: Magic-Word: Trackflaw + captcha en 2 etapes
-- Challenge 5: Magic-Word + User-Agent (WAF) + flag cache avec espaces
-
-Utilisation:
+Usage:
     poetry run python -m src.tp3.main
-    poetry run python -m src.tp3.main --challenge 5
-    poetry run python -m src.tp3.main --all
+    poetry run python -m src.tp3.main --challenge 1
 
-FLAGS TROUVES:
-- Challenge 1: FLAG-1{1z1_one} (flag=1337)
-- Challenge 2: FLAG-2{4_l1ttl3_h4rder} (flag=2756)
-- Challenge 3: FLAG-3{N0_t1m3_to_Sl33p} (flag=3889)
-- Challenge 4: FLAG-4{B4d_Pr0tection} (flag=7629)
-- Challenge 5: FLAG-5{Th3_l4st_0n3} (flag=8632)
+FLAGS:
+- Challenge 1: FLAG-1{1z1_one}
+- Challenge 2: FLAG-2{4_l1ttl3_h4rder}
+- Challenge 3: FLAG-3{N0_t1m3_to_Sl33p}
+- Challenge 4: FLAG-4{B4d_Pr0tection}
+- Challenge 5: FLAG-5{Th3_l4st_0n3}
 """
+
 import argparse
-import sys
-from typing import Optional
 
-from .utils.config import logger, BASE_URL, CHALLENGES
-from .utils.session import ChallengeSession
+from .utils.config import logger, BASE_URL
+from .utils.session import (
+    solve_challenge_1,
+    solve_with_content_length,
+    solve_challenge_4,
+    solve_challenge_5,
+)
 
 
-def solve_challenge(challenge_num: int) -> Optional[str]:
-    """
-    Resout un challenge specifique.
-
-    Args:
-        challenge_num: Numero du challenge (1-5)
-
-    Returns:
-        Le flag trouve ou None
-    """
-    if challenge_num not in CHALLENGES:
-        logger.error(f"Challenge {challenge_num} inconnu (1-5 disponibles)")
+def solve_challenge(num):
+    """Résout un challenge spécifique."""
+    if num == 1:
+        return solve_challenge_1()
+    elif num in [2, 3]:
+        return solve_with_content_length(num)
+    elif num == 4:
+        return solve_challenge_4()
+    elif num == 5:
+        return solve_challenge_5()
+    else:
+        logger.error(f"Challenge {num} inconnu")
         return None
 
-    session = ChallengeSession(challenge_num)
-    return session.solve()
 
-
-def solve_all_challenges() -> dict:
-    """
-    Resout tous les challenges.
-
-    Returns:
-        Dictionnaire {challenge_num: flag_string}
-    """
-    logger.info("=" * 60)
-    logger.info("TP3 - CAPTCHA SOLVER")
-    logger.info(f"Serveur: {BASE_URL}")
-    logger.info("=" * 60)
+def solve_all():
+    """Résout tous les challenges."""
+    print("=" * 50)
+    print("TP3 - CAPTCHA SOLVER")
+    print(f"Serveur: {BASE_URL}")
+    print("=" * 50)
 
     results = {}
 
-    for challenge_num in range(1, 6):
-        logger.info("")
-        flag = solve_challenge(challenge_num)
-        results[challenge_num] = flag
+    for num in range(1, 6):
+        print()
+        results[num] = solve_challenge(num)
 
-        if flag:
-            logger.info(f"*** FLAG {challenge_num}: {flag} ***")
-        else:
-            logger.warning(f"Challenge {challenge_num}: Non trouve")
+    # Résumé
+    print("\n" + "=" * 50)
+    print("RESUME")
+    print("=" * 50)
+    for num in range(1, 6):
+        status = results.get(num) or "Non trouvé"
+        print(f"  Challenge {num}: {status}")
 
-    # Resume final
-    print_summary(results)
+    found = sum(1 for v in results.values() if v and "FLAG" in str(v))
+    print(f"\nTotal: {found}/5 flags")
 
     return results
 
 
-def print_summary(results: dict) -> None:
-    """Affiche le resume des flags trouves."""
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("RESUME DES FLAGS")
-    logger.info("=" * 60)
-
-    for i in range(1, 6):
-        status = results.get(i) or "Non trouve"
-        logger.info(f"  Challenge {i}: {status}")
-
-    # Compter les succes
-    found = sum(1 for v in results.values() if v and not v.startswith("flag="))
-    logger.info("")
-    logger.info(f"Total: {found}/5 flags trouves")
-
-
-def parse_args():
-    """Parse les arguments de ligne de commande."""
-    parser = argparse.ArgumentParser(
-        description="TP3 - Captcha Solver",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exemples:
-  python -m src.tp3.main              # Resout tous les challenges
-  python -m src.tp3.main --challenge 1  # Resout uniquement le challenge 1
-  python -m src.tp3.main -c 5         # Resout uniquement le challenge 5
-        """,
-    )
-
-    parser.add_argument(
-        "-c",
-        "--challenge",
-        type=int,
-        choices=[1, 2, 3, 4, 5],
-        help="Numero du challenge a resoudre (1-5)",
-    )
-
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Resout tous les challenges (par defaut)",
-    )
-
-    return parser.parse_args()
-
-
 def main():
-    """Point d'entree principal."""
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="TP3 - Captcha Solver")
+    parser.add_argument("-c", "--challenge", type=int, choices=[1, 2, 3, 4, 5])
+    args = parser.parse_args()
 
     if args.challenge:
-        # Resoudre un seul challenge
-        logger.info("=" * 60)
-        logger.info(f"TP3 - Challenge {args.challenge}")
-        logger.info("=" * 60)
-
-        flag = solve_challenge(args.challenge)
-
-        if flag:
-            logger.info("")
-            logger.info(f"*** FLAG {args.challenge}: {flag} ***")
-            return {args.challenge: flag}
-        else:
-            logger.warning(f"Challenge {args.challenge}: Non trouve")
-            return {args.challenge: None}
+        result = solve_challenge(args.challenge)
+        print(f"\nRésultat: {result or 'Non trouvé'}")
     else:
-        # Resoudre tous les challenges
-        return solve_all_challenges()
+        solve_all()
 
 
 if __name__ == "__main__":

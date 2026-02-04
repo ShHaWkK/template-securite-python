@@ -1,198 +1,249 @@
-from typing import List, Tuple
-from xml.sax.saxutils import escape
+"""
+Module de génération de rapport PDF.
+"""
+
+from datetime import datetime
+
 from .config import logger
+
+# Import ReportLab (préféré) ou FPDF (fallback)
 try:
-    from reportlab.graphics.charts.piecharts import Pie
-    from reportlab.graphics.shapes import Drawing
-    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-    _HAS_RL = True
-except Exception:
-    _HAS_RL = False
-    from fpdf import FPDF
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.charts.piecharts import Pie
+    from reportlab.graphics.charts.legends import Legend
+
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        pass
 
 
-def _protocol_table(protocols: List[Tuple[str, int]]):
-    rows = [["Protocole", "Paquets"]] + [[p, str(n)] for p, n in protocols]
-    if _HAS_RL:
-        t = Table(rows, hAlign="LEFT")
-        t.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("PADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
-        )
-        return t
-    return rows
-
-
-def _verdict_table(verdicts):
-    rows = [["Protocole", "Paquets", "Légitimité", "Notes"]]
-    for v in verdicts:
-        rows.append([v.protocol, str(v.packets), v.status, v.notes])
-    if _HAS_RL:
-        t = Table(rows, colWidths=[80, 60, 90, 270], hAlign="LEFT")
-        t.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("PADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
-        )
-        return t
-    return rows
-
-
-def _pie_data(protocols: List[Tuple[str, int]], top: int = 6):
-    items = protocols[:top]
-    labels = [p for p, _ in items]
-    values = [n for _, n in items]
-
-    other = sum(n for _, n in protocols[top:])
-    if other > 0:
-        labels.append("Other")
-        values.append(other)
-
-    return labels, values
-
-
-def _build_pie(protocols: List[Tuple[str, int]]):
-    labels, values = _pie_data(protocols)
-    if _HAS_RL:
-        drawing = Drawing(450, 220)
-        pie = Pie()
-        pie.x = 120
-        pie.y = 20
-        pie.width = 180
-        pie.height = 180
-        pie.data = values if values else [1]
-        pie.labels = labels if labels else ["None"]
-        drawing.add(pie)
-        return drawing
-    return list(zip(labels, values))
-
-
-def _alerts_block(alerts):
-    if _HAS_RL:
-        styles = getSampleStyleSheet()
-        if not alerts:
-            return [Paragraph("Tout va bien : aucune tentative détectée.", styles["BodyText"])]
-        items = []
-        for a in alerts[:30]:
-            line = f"[{a.ts}] {a.protocol} - {a.src_ip} / {a.src_mac} - {a.reason}"
-            items.append(Paragraph(escape(line), styles["BodyText"]))
-        if len(alerts) > 30:
-            items.append(Paragraph(escape(f"... ({len(alerts) - 30} alertes supplémentaires)"), styles["BodyText"]))
-        return items
-    if not alerts:
-        return ["Tout va bien : aucune tentative détectée."]
-    out = []
-    for a in alerts[:30]:
-        out.append(f"[{a.ts}] {a.protocol} - {a.src_ip} / {a.src_mac} - {a.reason}")
-    if len(alerts) > 30:
-        out.append(f"... ({len(alerts) - 30} alertes supplémentaires)")
-    return out
+# Couleurs pour le graphique
+COLORS = (
+    [
+        colors.steelblue,
+        colors.coral,
+        colors.lightgreen,
+        colors.gold,
+        colors.plum,
+        colors.lightskyblue,
+        colors.salmon,
+        colors.khaki,
+    ]
+    if HAS_REPORTLAB
+    else []
+)
 
 
 class Report:
-    def __init__(self, capture, filename, summary):
+    """Génère un rapport PDF avec graphique et tableau."""
+
+    def __init__(self, capture, filename="report.pdf"):
+        """
+        Initialise le rapport.
+
+        Args:
+            capture: Instance de Capture avec les données
+            filename: Nom du fichier PDF
+        """
         self.capture = capture
         self.filename = filename
-        self.title = "TP 1 : Un IDS/IPS maison"
-        self.subtitle = "ESGI 4A - Programmation et sécurité python avancée 50 / 101"
-        self.summary = summary
-        self.array = None
-        self.graph = None
+        self.protocols = capture.get_sorted_protocols()
+        self.summary = capture.get_summary()
 
-    def generate(self, param: str) -> None:
-        protocols = self.capture.sort_network_protocols()
-        if param == "graph":
-            self.graph = _build_pie(protocols)
-        elif param == "array":
-            self.array = _protocol_table(protocols)
+    def save(self):
+        """Génère et sauvegarde le rapport PDF."""
+        logger.info(f"Génération du rapport PDF: {self.filename}")
 
-    def save(self, filename: str) -> None:
-        logger.info(f"Saving PDF report to {filename}")
-        verdicts = self.capture.get_verdicts()
-        alerts = self.capture.get_alerts()
-        if _HAS_RL:
-            doc = SimpleDocTemplate(filename, pagesize=A4)
-            styles = getSampleStyleSheet()
-            summary_html = escape(self.summary).replace("\n", "<br/>")
-            story = [
-                Paragraph(self.title, styles["Title"]),
-                Paragraph(self.subtitle, styles["Italic"]),
-                Spacer(1, 12),
-                Paragraph("Résumé", styles["Heading2"]),
-                Paragraph(summary_html, styles["BodyText"]),
-                Spacer(1, 12),
-            ]
-            if self.array is not None:
-                story += [Paragraph("Statistiques des protocoles", styles["Heading2"]), self.array, Spacer(1, 12)]
-            if self.graph is not None:
-                story += [Paragraph("Graphique (répartition simple)", styles["Heading2"]), self.graph, Spacer(1, 12)]
-            story += [
-                Paragraph("Analyse de légitimité par protocole", styles["Heading2"]),
-                _verdict_table(verdicts),
-                Spacer(1, 12),
-                Paragraph("Détails des tentatives / alertes", styles["Heading2"]),
-                Spacer(1, 6),
-            ]
-            story += _alerts_block(alerts)
-            doc.build(story)
-            return
+        if HAS_REPORTLAB:
+            self._save_reportlab()
+        else:
+            self._save_fpdf()
+
+        logger.info(f"Rapport sauvegardé: {self.filename}")
+
+    def _save_reportlab(self):
+        """Génère le PDF avec ReportLab."""
+        doc = SimpleDocTemplate(self.filename, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Titre
+        story.append(Paragraph("TP1 - Analyse du Trafic Réseau", styles["Title"]))
+        story.append(
+            Paragraph(
+                f"ESGI 4A - Sécurité Python | {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Italic"]
+            )
+        )
+        story.append(Spacer(1, 20))
+
+        # Résumé
+        story.append(Paragraph("Résumé de la capture", styles["Heading2"]))
+        for line in self.summary.split("\n"):
+            if line.strip():
+                story.append(Paragraph(line, styles["BodyText"]))
+        story.append(Spacer(1, 20))
+
+        # Graphique
+        if self.protocols:
+            story.append(Paragraph("Répartition des protocoles", styles["Heading2"]))
+            story.append(self._create_pie_chart())
+            story.append(Spacer(1, 20))
+
+        # Tableau
+        story.append(Paragraph("Statistiques détaillées", styles["Heading2"]))
+        story.append(self._create_table())
+
+        doc.build(story)
+
+    def _create_pie_chart(self) -> Drawing:
+        """Crée un graphique en camembert."""
+        # Limiter à 8 protocoles max
+        top_protocols = self.protocols[:7]
+        other = sum(n for _, n in self.protocols[7:])
+
+        labels = [p for p, _ in top_protocols]
+        values = [n for _, n in top_protocols]
+
+        if other > 0:
+            labels.append("Autres")
+            values.append(other)
+
+        # Créer le dessin
+        drawing = Drawing(500, 250)
+
+        # Créer le pie
+        pie = Pie()
+        pie.x = 100
+        pie.y = 25
+        pie.width = 180
+        pie.height = 180
+        pie.data = values if values else [1]
+        pie.labels = [f"{label}\n({val})" for label, val in zip(labels, values)] if values else ["Aucun"]
+
+        # Couleurs
+        for i in range(len(values)):
+            pie.slices[i].fillColor = COLORS[i % len(COLORS)]
+
+        drawing.add(pie)
+
+        # Légende
+        legend = Legend()
+        legend.x = 320
+        legend.y = 150
+        legend.columnMaximum = 8
+        legend.colorNamePairs = [(COLORS[i % len(COLORS)], labels[i]) for i in range(len(labels))]
+        drawing.add(legend)
+
+        return drawing
+
+    def _create_table(self) -> Table:
+        """Crée le tableau des protocoles."""
+        total = sum(n for _, n in self.protocols)
+
+        # En-tête
+        data = [["Protocole", "Paquets", "Pourcentage"]]
+
+        # Données
+        for proto, count in self.protocols:
+            pct = f"{100 * count / total:.1f}%" if total > 0 else "0%"
+            data.append([proto, str(count), pct])
+
+        # Total
+        data.append(["TOTAL", str(total), "100%"])
+
+        # Style
+        table = Table(data, colWidths=[200, 100, 100])
+        table.setStyle(
+            TableStyle(
+                [
+                    # En-tête
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.steelblue),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                    # Corps
+                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                    # Dernière ligne (total)
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.lightgrey),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    # Grille
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                ]
+            )
+        )
+
+        return table
+
+    def _save_fpdf(self):
+        """Génère le PDF avec FPDF (fallback)."""
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=14)
-        pdf.cell(0, 10, self.title, ln=1)
-        pdf.set_font("Arial", size=10)
-        pdf.cell(0, 8, self.subtitle, ln=1)
-        pdf.ln(4)
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0, 8, "Résumé", ln=1)
-        for line in (self.summary or "").splitlines():
-            pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 6, line)
-        pdf.ln(4)
-        if isinstance(self.array, list):
-            pdf.set_font("Arial", size=12)
-            pdf.cell(0, 8, "Statistiques des protocoles", ln=1)
-            pdf.set_font("Arial", size=10)
-            for row in self.array:
-                pdf.cell(0, 6, " | ".join(row), ln=1)
-            pdf.ln(4)
-        if isinstance(self.graph, list):
-            pdf.set_font("Arial", size=12)
-            pdf.cell(0, 8, "Graphique (répartition simple)", ln=1)
-            pdf.set_font("Arial", size=10)
-            total = sum(v for _, v in self.graph) or 1
-            for label, value in self.graph:
-                w = int(100 * value / total)
-                pdf.cell(0, 6, f"{label}: {'#' * max(1, w // 5)} ({value})", ln=1)
-            pdf.ln(4)
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0, 8, "Analyse de légitimité par protocole", ln=1)
-        pdf.set_font("Arial", size=10)
-        vt = _verdict_table(verdicts)
-        if isinstance(vt, list):
-            for row in vt:
-                pdf.cell(0, 6, " | ".join(row), ln=1)
-        pdf.ln(4)
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0, 8, "Détails des tentatives / alertes", ln=1)
-        pdf.set_font("Arial", size=10)
-        ab = _alerts_block(alerts)
-        if isinstance(ab, list):
-            for line in ab:
+
+        # Titre
+        pdf.set_font("Arial", "B", 16)
+        pdf.cell(0, 10, "TP1 - Analyse du Trafic Reseau", ln=True, align="C")
+        pdf.set_font("Arial", "I", 10)
+        pdf.cell(
+            0,
+            8,
+            f"ESGI 4A - Securite Python | {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            ln=True,
+            align="C",
+        )
+        pdf.ln(10)
+
+        # Résumé
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Resume de la capture", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for line in self.summary.split("\n"):
+            if line.strip():
                 pdf.multi_cell(0, 6, line)
-        pdf.output(filename)
+        pdf.ln(10)
+
+        # Graphique (texte)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Repartition des protocoles", ln=True)
+        pdf.set_font("Arial", "", 10)
+
+        total = sum(n for _, n in self.protocols)
+        for proto, count in self.protocols[:10]:
+            pct = int(100 * count / total) if total > 0 else 0
+            bar = "#" * (pct // 5)
+            pdf.cell(0, 6, f"{proto}: {bar} ({count} - {pct}%)", ln=True)
+        pdf.ln(10)
+
+        # Tableau
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Statistiques detaillees", ln=True)
+        pdf.set_font("Arial", "B", 10)
+        pdf.cell(80, 8, "Protocole", 1)
+        pdf.cell(40, 8, "Paquets", 1)
+        pdf.cell(40, 8, "Pourcentage", 1)
+        pdf.ln()
+
+        pdf.set_font("Arial", "", 10)
+        for proto, count in self.protocols:
+            pct = f"{100 * count / total:.1f}%" if total > 0 else "0%"
+            pdf.cell(80, 6, proto, 1)
+            pdf.cell(40, 6, str(count), 1)
+            pdf.cell(40, 6, pct, 1)
+            pdf.ln()
+
+        # Total
+        pdf.set_font("Arial", "B", 10)
+        pdf.cell(80, 8, "TOTAL", 1)
+        pdf.cell(40, 8, str(total), 1)
+        pdf.cell(40, 8, "100%", 1)
+
+        pdf.output(self.filename)

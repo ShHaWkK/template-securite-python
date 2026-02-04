@@ -3,9 +3,9 @@
 Générateur de rapport PDF pour l'analyse de shellcode.
 Utilise fpdf2 pour créer un rapport professionnel avec l'analyse LLM.
 """
+
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Optional
 
@@ -18,7 +18,7 @@ class ShellcodeReportPDF(FPDF):
     def __init__(self):
         super().__init__()
         self.set_auto_page_break(auto=True, margin=15)
-    
+
     @staticmethod
     def _sanitize_text(text: str) -> str:
         """Remplace les caractères Unicode non supportés par des équivalents ASCII."""
@@ -28,12 +28,9 @@ class ShellcodeReportPDF(FPDF):
             "←": "<-",
             "✓": "[OK]",
             "✗": "[X]",
-            "⚠️": "[!]",
             "⚠": "[!]",
-            "\u2022": "-",
             "—": "--",
             "–": "-",
-            "'": "'",
             "'": "'",
             """: '"',
             """: '"',
@@ -85,12 +82,12 @@ class ShellcodeReportPDF(FPDF):
         """Ajoute un bloc de code avec fond gris."""
         self.set_font("Courier", "", 8)
         self.set_fill_color(245, 245, 245)
-        
+
         lines = code.split("\n")
         if len(lines) > max_lines:
             lines = lines[:max_lines]
             lines.append(f"... ({len(code.split(chr(10))) - max_lines} lignes supplementaires)")
-        
+
         for line in lines:
             line = self._sanitize_text(line)
             # Tronquer les lignes trop longues
@@ -127,7 +124,7 @@ def generate_shellcode_report(
 ) -> str:
     """
     Génère un rapport PDF complet de l'analyse de shellcode.
-    
+
     Args:
         shellcode: Le shellcode analysé (bytes)
         shellcode_index: Index du shellcode dans le fichier
@@ -137,7 +134,7 @@ def generate_shellcode_report(
         llm_analysis: Analyse générée par le LLM
         output_path: Chemin de sortie (optionnel, généré automatiquement sinon)
         llm_provider: Nom du provider LLM utilisé
-    
+
     Returns:
         Le chemin du fichier PDF généré
     """
@@ -181,15 +178,16 @@ def generate_shellcode_report(
     pdf.add_section_title("Analyse par Intelligence Artificielle", color=(192, 57, 43))
     pdf.add_subsection(f"Provider: {llm_provider.upper()}")
     pdf.ln(3)
-    
+
     # Diviser l'analyse LLM en sections si possible
     llm_lines = llm_analysis.strip().split("\n")
     current_section = []
-    
+
     for line in llm_lines:
         # Détection des titres de section (commencent par un chiffre ou sont en majuscules)
         if line.strip() and (
-            line.strip()[0].isdigit() and ")" in line[:5]
+            line.strip()[0].isdigit()
+            and ")" in line[:5]
             or line.strip().startswith("Résumé")
             or line.strip().startswith("Comportement")
             or line.strip().startswith("IOC")
@@ -202,7 +200,7 @@ def generate_shellcode_report(
             current_section = []
         else:
             current_section.append(line)
-    
+
     if current_section:
         pdf.add_text("\n".join(current_section))
 
@@ -220,12 +218,14 @@ def generate_shellcode_report(
 def _compute_md5(data: bytes) -> str:
     """Calcule le hash MD5."""
     import hashlib
+
     return hashlib.md5(data).hexdigest()
 
 
 def _compute_sha256(data: bytes) -> str:
     """Calcule le hash SHA256."""
     import hashlib
+
     return hashlib.sha256(data).hexdigest()
 
 
@@ -233,14 +233,14 @@ def _generate_hexdump(data: bytes, max_bytes: int = 256) -> str:
     """Génère un hexdump formaté."""
     lines = []
     data_to_dump = data[:max_bytes]
-    
+
     for i in range(0, len(data_to_dump), 16):
-        chunk = data_to_dump[i:i+16]
+        chunk = data_to_dump[i : i + 16]
         hex_part = " ".join(f"{b:02x}" for b in chunk)
         ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
         lines.append(f"{i:08x}  {hex_part:<48}  |{ascii_part}|")
-    
+
     if len(data) > max_bytes:
         lines.append(f"... ({len(data) - max_bytes} octets supplémentaires)")
-    
+
     return "\n".join(lines)

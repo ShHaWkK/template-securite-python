@@ -7,6 +7,7 @@ from pathlib import Path
 # Charger le .env depuis le dossier src/
 try:
     from dotenv import load_dotenv
+
     # Chercher le .env dans plusieurs emplacements possibles
     env_paths = [
         Path(__file__).parent.parent.parent / ".env",  # src/.env

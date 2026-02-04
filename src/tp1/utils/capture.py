@@ -1,264 +1,137 @@
-import os
-import subprocess
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+"""
+Module de capture réseau avec Scapy.
+"""
+
+from collections import Counter
+from typing import Dict, List, Tuple
 
 from scapy.all import sniff
 from scapy.layers.dns import DNS
+from scapy.layers.http import HTTP
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
-from scapy.layers.l2 import ARP, Ether
+from scapy.layers.l2 import ARP
 from scapy.packet import Packet
 
-from .config import logger
+from .config import logger, DEFAULT_CAPTURE_SECONDS, DEFAULT_PACKET_COUNT
 from .lib import choose_interface
 
 
-@dataclass
-class Alert:
-    ts: str
-    protocol: str
-    src_ip: str
-    src_mac: str
-    reason: str
-
-
-@dataclass
-class ProtocolVerdict:
-    protocol: str
-    packets: int
-    # "OK" | "ILLEGITIME"
-    status: str
-    notes: str
-
-
-def _utc_now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def _packet_protocol(pkt: Packet) -> str:
+def get_protocol(pkt: Packet) -> str:
+    """Identifie le protocole d'un paquet."""
+    # Layer 2
     if pkt.haslayer(ARP):
         return "ARP"
+
+    # IPv6
     if pkt.haslayer(IPv6):
         if pkt.haslayer(TCP):
-            return "TCPv6"
+            return "TCP/IPv6"
         if pkt.haslayer(UDP):
-            return "UDPv6"
+            return "UDP/IPv6"
         return "IPv6"
+
+    # IPv4
     if pkt.haslayer(IP):
         if pkt.haslayer(DNS):
             return "DNS"
+        if pkt.haslayer(HTTP):
+            return "HTTP"
         if pkt.haslayer(ICMP):
             return "ICMP"
         if pkt.haslayer(TCP):
+            tcp = pkt[TCP]
+            # Ports connus
+            if tcp.dport == 443 or tcp.sport == 443:
+                return "HTTPS"
+            if tcp.dport == 80 or tcp.sport == 80:
+                return "HTTP"
+            if tcp.dport == 22 or tcp.sport == 22:
+                return "SSH"
             return "TCP"
         if pkt.haslayer(UDP):
+            udp = pkt[UDP]
+            if udp.dport == 53 or udp.sport == 53:
+                return "DNS"
             return "UDP"
         return "IP"
-    return pkt.lastlayer().name or "UNKNOWN"
 
-
-def _packet_src(pkt: Packet) -> Tuple[str, str]:
-    ip = ""
-    if pkt.haslayer(IP):
-        ip = pkt[IP].src
-    elif pkt.haslayer(IPv6):
-        ip = pkt[IPv6].src
-
-    mac = pkt[Ether].src if pkt.haslayer(Ether) else ""
-    return ip, mac
-
-
-def _packet_bytes(pkt: Packet) -> bytes:
-    try:
-        return bytes(pkt)
-    except Exception:
-        return b""
-
-
-def _looks_like_sqli(payload: bytes) -> Optional[str]:
-    if not payload:
-        return None
-
-    p = payload.lower()
-    patterns = [
-        b"union select",
-        b"' or 1=1",
-        b" or 1=1",
-        b"information_schema",
-        b"drop table",
-        b"sleep(",
-    ]
-    for pat in patterns:
-        if pat in p:
-            return f"SQLi suspect: {pat.decode(errors='ignore')}"
-    return None
-
-
-def _detect_arp_spoof(pkt: Packet, arp_map: Dict[str, str]) -> Optional[str]:
-    if not pkt.haslayer(ARP):
-        return None
-
-    arp = pkt[ARP]
-    if arp.op != 2:  # ARP reply
-        return None
-
-    ip = arp.psrc
-    mac = arp.hwsrc
-    old = arp_map.get(ip)
-
-    if old and old.lower() != mac.lower():
-        return f"ARP spoof suspected: {ip} was {old}, now {mac}"
-
-    arp_map[ip] = mac
-    return None
+    # Autre
+    return pkt.lastlayer().name if pkt.lastlayer() else "Unknown"
 
 
 class Capture:
-    def __init__(self) -> None:
-        self.interface = choose_interface()
+    """Classe pour capturer et analyser le trafic réseau."""
+
+    def __init__(self, interface=None):
+        """
+        Initialise la capture.
+        Args:
+            interface: Interface réseau à utiliser
+        """
+        self.interface = choose_interface(interface)
         self.packets: List[Packet] = []
         self.protocol_counts: Counter = Counter()
-        self.alerts: List[Alert] = []
-        self.verdicts: List[ProtocolVerdict] = []
-        self.summary = ""
 
-    def capture_traffic(self) -> None:
+    def capture_traffic(self, seconds=None, count=None):
         """
-        Capture trafic via Scapy
+        Capture le trafic réseau.
+
+        Args:
+            seconds: Durée de capture en secondes
+            count: Nombre de paquets à capturer
         """
         if not self.interface:
-            logger.warning("No interface selected. Skipping sniff.")
-            self.packets = []
-            self.protocol_counts = Counter()
+            logger.error("Aucune interface réseau disponible")
             return
 
-        seconds = int(os.getenv("TP1_CAPTURE_SECONDS", "10"))
-        count = int(os.getenv("TP1_PACKET_COUNT", "0"))
+        seconds = seconds or DEFAULT_CAPTURE_SECONDS
+        count = count or DEFAULT_PACKET_COUNT
 
-        logger.info(f"Capturing on {self.interface} for {seconds}s (count={count})")
-        self.packets = self._sniff_packets(seconds, count)
-        self.protocol_counts = self._count_protocols(self.packets)
+        logger.info(f"Capture sur {self.interface} pendant {seconds}s (max {count} paquets)")
 
-    def _sniff_packets(self, seconds: int, count: int) -> List[Packet]:
         try:
-            pkts = sniff(iface=self.interface, timeout=seconds, count=count or 0)
-            return list(pkts)
+            self.packets = list(sniff(iface=self.interface, timeout=seconds, count=count))
+            logger.info(f"Capturé {len(self.packets)} paquets")
         except PermissionError:
-            logger.error("Sniff requires sudo/root.")
-            return []
+            logger.error("Permission refusée")
+            self.packets = []
+        except Exception as e:
+            logger.error(f"Erreur de capture: {e}")
+            self.packets = []
 
-    def _count_protocols(self, packets: List[Packet]) -> Counter:
-        c = Counter()
-        for pkt in packets:
-            c[_packet_protocol(pkt)] += 1
-        return c
+        # Compter les protocoles
+        self.protocol_counts = Counter(get_protocol(pkt) for pkt in self.packets)
 
-    def sort_network_protocols(self) -> List[Tuple[str, int]]:
-        return sorted(self.protocol_counts.items(), key=lambda x: x[1], reverse=True)
-
-    def get_all_protocols(self) -> Dict[str, int]:
+    def get_protocols(self) -> Dict[str, int]:
+        """Retourne le dictionnaire des protocoles"""
         return dict(self.protocol_counts)
 
-    def analyse(self, protocols: str) -> None:
-        """
-        analyse par protocole
-        """
-        _ = self.get_all_protocols()
-        _ = self.sort_network_protocols()
-
-        self.alerts = self._run_detectors(self.packets)
-        self.verdicts = self._build_verdicts()
-        self.summary = self.gen_summary()
-
-
-    def _run_detectors(self, packets: List[Packet]) -> List[Alert]:
-        """
-        Cette fonction permet de parse les paquets.
-        
-        :param self: Description
-        :param packets: Description
-        :type packets: List[Packet]
-        :return: Description
-        :rtype: List[Alert]
-        """
-        arp_map: Dict[str, str] = {}
-        alerts: List[Alert] = []
-
-        for pkt in packets:
-            arp_reason = _detect_arp_spoof(pkt, arp_map)
-            if arp_reason:
-                alerts.append(self._make_alert(pkt, "ARP", arp_reason))
-                continue
-
-            sqli_reason = _looks_like_sqli(_packet_bytes(pkt))
-            if sqli_reason:
-                alerts.append(self._make_alert(pkt, _packet_protocol(pkt), sqli_reason))
-
-        return alerts
-
-    def _make_alert(self, pkt: Packet, proto: str, reason: str) -> Alert:
-        ip, mac = _packet_src(pkt)
-        return Alert(ts=_utc_now(), protocol=proto, src_ip=ip, src_mac=mac, reason=reason)
-
-    def _build_verdicts(self) -> List[ProtocolVerdict]:
-        
-        alerts_by_proto = defaultdict(int)
-        for a in self.alerts:
-            alerts_by_proto[a.protocol] += 1
-
-        verdicts: List[ProtocolVerdict] = []
-        for proto, count in self.sort_network_protocols():
-            if alerts_by_proto.get(proto, 0) > 0:
-                verdicts.append(ProtocolVerdict(proto, count, "ILLEGITIME", "Alertes détectées"))
-            else:
-                verdicts.append(ProtocolVerdict(proto, count, "OK", "Trafic légitime"))
-        return verdicts
-
-    def gen_summary(self) -> str:
-        total = sum(self.protocol_counts.values())
-        lines = [
-            f"- Interface: {self.interface}",
-            f"- Paquets capturés: {total}",
-            f"- Protocoles distincts: {len(self.protocol_counts)}",
-            f"- Alertes: {len(self.alerts)}",
-        ]
-        return "\n".join(lines) + "\n"
+    def get_sorted_protocols(self) -> List[Tuple[str, int]]:
+        """Retourne les protocoles triés par nombre de paquets"""
+        return sorted(self.protocol_counts.items(), key=lambda x: x[1], reverse=True)
 
     def get_summary(self) -> str:
-        return self.summary
+        """Génère un résumé textuel."""
+        total = sum(self.protocol_counts.values())
+        lines = [
+            f"Interface: {self.interface}",
+            f"Paquets capturés: {total}",
+            f"Protocoles distincts: {len(self.protocol_counts)}",
+            "",
+            "Répartition:",
+        ]
 
-    def get_alerts(self):
-        return self.alerts
+        for proto, count in self.get_sorted_protocols():
+            pct = 100 * count / total if total > 0 else 0
+            lines.append(f"  - {proto}: {count} ({pct:.1f}%)")
 
-    def get_verdicts(self):
-        return self.verdicts
+        return "\n".join(lines)
 
-    def block_attacker(self, ip: str) -> bool:
-        """
-        FACULTATIF IPS : active seulement si TP1_ENABLE_BLOCK=1
-        """
-        if not ip or os.getenv("TP1_ENABLE_BLOCK", "0") != "1":
-            return False
-
-        try:
-            import platform
-            if platform.system().lower().startswith("win"):
-                cmds = [
-                    ["netsh", "advfirewall", "firewall", "add", "rule", "name", f"TP1_Block_In_{ip}", "dir", "in", "action", "block", "remoteip", ip],
-                    ["netsh", "advfirewall", "firewall", "add", "rule", "name", f"TP1_Block_Out_{ip}", "dir", "out", "action", "block", "remoteip", ip],
-                ]
-                for cmd in cmds:
-                    subprocess.run(cmd, check=True, capture_output=True, text=True)
-                logger.warning(f"Blocked attacker IP via Windows Firewall: {ip}")
-                return True
-            else:
-                cmd = ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip, "drop"]
-                subprocess.run(cmd, check=True, capture_output=True, text=True)
-                logger.warning(f"Blocked attacker IP via nftables: {ip}")
-                return True
-        except Exception as e:
-            logger.error(f"Failed to block {ip}: {e}")
-            return False
+    def print_summary(self):
+        """Affiche le résumé dans la console"""
+        print("\n" + "=" * 50)
+        print("RÉSUMÉ DE LA CAPTURE")
+        print("=" * 50)
+        print(self.get_summary())
+        print("=" * 50 + "\n")

@@ -1,6 +1,7 @@
 """
 Tests unitaires pour le module llm.
 """
+
 import os
 from unittest.mock import patch, MagicMock
 
@@ -67,15 +68,7 @@ class TestExtractOpenaiText:
 
     def test_when_valid_response_then_extract_content(self):
         # Given
-        data = {
-            "choices": [
-                {
-                    "message": {
-                        "content": "Ceci est l'analyse du shellcode."
-                    }
-                }
-            ]
-        }
+        data = {"choices": [{"message": {"content": "Ceci est l'analyse du shellcode."}}]}
 
         # When
         result = _extract_openai_text(data)
@@ -109,15 +102,7 @@ class TestExtractGeminiText:
 
     def test_when_valid_response_then_extract_text(self):
         # Given
-        data = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [{"text": "Analyse Gemini du shellcode."}]
-                    }
-                }
-            ]
-        }
+        data = {"candidates": [{"content": {"parts": [{"text": "Analyse Gemini du shellcode."}]}}]}
 
         # When
         result = _extract_gemini_text(data)
@@ -127,18 +112,7 @@ class TestExtractGeminiText:
 
     def test_when_multiple_parts_then_concat_them(self):
         # Given
-        data = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {"text": "Partie 1."},
-                            {"text": "Partie 2."}
-                        ]
-                    }
-                }
-            ]
-        }
+        data = {"candidates": [{"content": {"parts": [{"text": "Partie 1."}, {"text": "Partie 2."}]}}]}
 
         # When
         result = _extract_gemini_text(data)
@@ -205,9 +179,7 @@ class TestCallOpenai:
         # Given
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "Analyse réussie"}}]
-        }
+        mock_response.json.return_value = {"choices": [{"message": {"content": "Analyse réussie"}}]}
         mock_post.return_value = mock_response
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):

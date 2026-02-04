@@ -4,6 +4,7 @@ Module d'analyse de shellcode avec pylibemu.
 Pylibemu est un wrapper Python pour libemu, une bibliothèque
 d'émulation x86 permettant de détecter et analyser les shellcodes.
 """
+
 from __future__ import annotations
 
 

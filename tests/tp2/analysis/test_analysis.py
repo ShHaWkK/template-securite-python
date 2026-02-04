@@ -1,6 +1,7 @@
 """
 Tests unitaires pour le module Analysis.
 """
+
 from src.tp2.analysis.Analysis import (
     get_shellcode_strings,
     get_capstone_analysis,

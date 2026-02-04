@@ -11,9 +11,10 @@ Usage:
 
 FLAG: ESGI{G00d_Pr0gr4mmer}
 """
+
 import argparse
 
-from .utils.config import logger, SERVER_IP, SERVER_PORT
+from .utils.config import SERVER_IP, SERVER_PORT
 from .utils.decoder import decode
 from .utils.client import run_challenge
 
@@ -24,9 +25,9 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=SERVER_PORT, help="Port")
     parser.add_argument("--rounds", "-r", type=int, default=200, help="Max rounds")
     args = parser.parse_args()
-    
+
     success = run_challenge(args.ip, args.port, decode, args.rounds)
-    
+
     if success:
         print("\nChallenge réussi!")
     else:

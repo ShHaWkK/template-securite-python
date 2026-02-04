@@ -7,6 +7,7 @@ Fonctions principales:
     - get_capstone_analysis: retourne l'analyse Capstone du shellcode
     - get_llm_analysis: retourne l'analyse LLM du shellcode
 """
+
 from __future__ import annotations
 
 import argparse
@@ -61,7 +62,7 @@ def main() -> int:
     generated_pdfs: list[str] = []
 
     for idx, shellcode in enumerate(shellcodes, start=1):
-        # Log 
+        # Log
         logger.info(f"Testing shellcode #{idx} of size {len(shellcode)}B")
 
         # Extraction des chaînes
@@ -99,7 +100,11 @@ def main() -> int:
                 llm_provider=args.provider,
             )
             print("\n<Explication LLM>")
-            logger.info(f"Explication LLM: {llm_analysis[:200]}..." if len(llm_analysis) > 200 else f"Explication LLM: {llm_analysis}")
+            logger.info(
+                f"Explication LLM: {llm_analysis[:200]}..."
+                if len(llm_analysis) > 200
+                else f"Explication LLM: {llm_analysis}"
+            )
             print(llm_analysis)
 
         # Génération du rapport PDF si demandé

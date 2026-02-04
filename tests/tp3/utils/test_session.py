@@ -1,7 +1,8 @@
 """
 Tests pour le module session.
 """
-from unittest.mock import MagicMock, patch
+
+from unittest.mock import MagicMock
 from src.tp3.utils.session import ChallengeSession
 
 

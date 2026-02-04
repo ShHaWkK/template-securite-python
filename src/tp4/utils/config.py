@@ -1,6 +1,7 @@
 """
 Configuration du TP4 - Crazy Decoder.
 """
+
 import logging
 
 # Logger
