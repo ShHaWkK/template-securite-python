@@ -35,6 +35,17 @@ def _parse_hex_stream(text: str) -> bytes:
     return bytes(out)
 
 
+def _parse_section(text: str) -> bytes | None:
+    """Parse une section de texte en bytes shellcode."""
+    text = text.strip()
+    if not text:
+        return None
+    if "\\x" in text:
+        return _parse_c_style_shellcode(text) or None
+    b = _parse_hex_stream(text)
+    return b if b else None
+
+
 def read_shellcodes_from_file(path: str) -> List[bytes]:
     if not path or not os.path.exists(path):
         return []
@@ -50,7 +61,18 @@ def read_shellcodes_from_file(path: str) -> List[bytes]:
     except Exception:
         text = ""
 
-    candidates: List[bytes] = []
+    # Support de plusieurs shellcodes séparés par "---"
+    if text and "---" in text:
+        sections = text.split("---")
+        candidates: List[bytes] = []
+        for section in sections:
+            b = _parse_section(section)
+            if b:
+                candidates.append(b)
+        if candidates:
+            return candidates
+
+    candidates = []
     if text:
         if "\\x" in text:
             candidates.append(_parse_c_style_shellcode(text))

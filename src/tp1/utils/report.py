@@ -21,8 +21,10 @@ except ImportError:
     HAS_REPORTLAB = False
     try:
         from fpdf import FPDF
+
+        HAS_FPDF = True
     except ImportError:
-        pass
+        HAS_FPDF = False
 
 
 # Couleurs pour le graphique
@@ -64,8 +66,11 @@ class Report:
 
         if HAS_REPORTLAB:
             self._save_reportlab()
-        else:
+        elif "HAS_FPDF" in globals() and HAS_FPDF:
             self._save_fpdf()
+        else:
+            logger.warning("Backend PDF indisponible (reportlab/fpdf2 non installés) - rapport ignoré")
+            return
 
         logger.info(f"Rapport sauvegardé: {self.filename}")
 
@@ -103,7 +108,7 @@ class Report:
 
         doc.build(story)
 
-    def _create_pie_chart(self) -> Drawing:
+    def _create_pie_chart(self) -> "Drawing":
         """Crée un graphique en camembert."""
         # Limiter à 8 protocoles max
         top_protocols = self.protocols[:7]
@@ -144,7 +149,7 @@ class Report:
 
         return drawing
 
-    def _create_table(self) -> Table:
+    def _create_table(self) -> "Table":
         """Crée le tableau des protocoles."""
         total = sum(n for _, n in self.protocols)
 

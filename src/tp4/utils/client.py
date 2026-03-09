@@ -59,6 +59,27 @@ def run_challenge(ip, port, decoder, max_rounds=200):
 
             # Flag trouvé ?
             if "flag" in data_lower or "gg" in data_lower:
+                # Le serveur demande un dernier décodage avant de donner le vrai flag
+                if "d" in data_lower and "coder" in data_lower and ":" in data:
+                    # Extraire la partie encodée après ":"
+                    parts = data.split(":", 1)
+                    to_decode = parts[1].strip() if len(parts) > 1 else ""
+                    if to_decode:
+                        answer = decoder(to_decode)
+                        conn.sendline(answer.encode())
+                        try:
+                            final = conn.recv(timeout=5).decode("utf-8", errors="ignore")
+                            print("\n" + "=" * 50)
+                            print("FLAG TROUVE!")
+                            print(final.strip())
+                            print("=" * 50)
+                        except Exception:
+                            print("\n" + "=" * 50)
+                            print("FLAG TROUVE! (réponse envoyée)")
+                            print(f"Décodé: {answer}")
+                            print("=" * 50)
+                        return True
+
                 print("\n" + "=" * 50)
                 print("FLAG TROUVE!")
                 print(data)

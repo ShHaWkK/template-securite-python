@@ -5,7 +5,9 @@ Configuration du TP3 - Captcha Solver.
 import logging
 
 # Logger
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+_root = logging.getLogger()
+if not _root.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("TP3")
 
 # Serveur

@@ -5,7 +5,9 @@ Configuration du TP1 - IDS/IPS maison.
 import logging
 
 # Logger
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+_root = logging.getLogger()
+if not _root.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("TP1")
 
 # Configuration par défaut
