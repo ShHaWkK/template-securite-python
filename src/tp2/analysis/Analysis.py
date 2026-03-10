@@ -235,29 +235,25 @@ def construire_prompt(shellcode, strings, pylibemu_out, capstone_out):
     # utilise la fonction centrale
     analyse = analyser_shellcode(shellcode, asm_lines, strings)
 
-    # extrait du desassemblage (100 lignes max)
-    asm_extrait = "\n".join(asm_lines[:100])
+    # extrait du desassemblage (50 lignes suffisent pour guider le LLM)
+    asm_extrait = "\n".join(asm_lines[:50])
 
-    prompt = f"""Analyse ce shellcode de {analyse["size"]} octets.
+    strings_affichees = ", ".join(f'"{s}"' for s in strings[:10]) if strings else "aucune"
 
-Strings: {strings if strings else "aucune"}
+    prompt = f"""Shellcode x86 Windows de {analyse["size"]} octets.
 
-Pylibemu:
-{pylibemu_out}
+Strings extraites : {strings_affichees}
 
-Desassemblage:
+Désassemblage :
 {asm_extrait}
 
-Resume: {", ".join(analyse["resume"])}
-Comportement: {", ".join(analyse["comportement"]) if analyse["comportement"] else "a determiner"}
-IOC: {", ".join(analyse["iocs"]) if analyse["iocs"] else "aucun"}
-Niveau estime: {analyse["niveau"]}
+Pylibemu :
+{pylibemu_out or "non disponible"}
 
-Donne moi:
-1) Resume en 5 lignes max
-2) Comportement (API, DLL, reseau, fichiers, commandes)
-3) IOC detectes
-4) Niveau de difficulte avec justification"""
+Rédige en français une analyse en 3 paragraphes courts :
+1. Ce que fait le shellcode concrètement, étape par étape (cite les strings et API visibles).
+2. L'effet final sur la machine victime (exécution, persistance, accès distant, exfiltration...).
+3. IOC principaux | Niveau de menace (Facile/Moyen/Difficile) justifié en une phrase."""
 
     return prompt, analyse
 

@@ -19,12 +19,12 @@ from .utils.decoder import decode
 from .utils.client import run_challenge
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="TP4 - Crazy Decoder")
     parser.add_argument("--ip", default=SERVER_IP, help="IP du serveur")
     parser.add_argument("--port", "-p", type=int, default=SERVER_PORT, help="Port")
     parser.add_argument("--rounds", "-r", type=int, default=200, help="Max rounds")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     success = run_challenge(args.ip, args.port, decode, args.rounds)
 

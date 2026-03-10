@@ -9,6 +9,7 @@ packages = [
   { include = "tp1", from = "src" },
   { include = "tp2", from = "src" },
   { include = "tp3", from = "src" },
+  { include = "tp4", from = "src" },
 ]
 
 [tool.poetry.dependencies]
@@ -34,9 +35,11 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
+main = "src.main:main"
 tp1 = "tp1.main:main"
 tp2 = "tp2.main:main"
 tp3 = "tp3.main:main"
+tp4 = "tp4.main:main"
 
 [dependency-groups]
 dev = [

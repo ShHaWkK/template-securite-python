@@ -69,10 +69,10 @@ def solve_all():
     return results
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="TP3 - Captcha Solver")
     parser.add_argument("-c", "--challenge", type=int, choices=[1, 2, 3, 4, 5])
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.challenge:
         result = solve_challenge(args.challenge)

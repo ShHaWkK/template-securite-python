@@ -24,7 +24,7 @@ from .utils.capture import Capture
 from .utils.report import Report
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="TP1 - Analyse du trafic réseau avec Scapy")
     parser.add_argument("-i", "--interface", help="Interface réseau à utiliser")
     parser.add_argument(
@@ -45,7 +45,7 @@ def main():
         "-o", "--output", default="report.pdf", help="Fichier PDF de sortie (défaut: report.pdf)"
     )
     parser.add_argument("--list", action="store_true", help="Liste les interfaces disponibles")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Lister les interfaces
     if args.list:

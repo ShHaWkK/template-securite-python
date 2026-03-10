@@ -6,10 +6,16 @@ import os
 import requests
 
 
-SYSTEM_PROMPT = """Tu es analyste shellcode/malware. Reponds en francais, structure et factuel.
-Objectif: expliquer le comportement (API/DLL, processus, reseau, fichiers, commandes) et les IOC.
-Interdit: donner des instructions d'exploitation, des payloads, ou des etapes pour attaquer.
-Reste cote analyse/defense."""
+SYSTEM_PROMPT = """Tu es un expert en analyse de malware et shellcode x86/x64 Windows/Linux.
+
+Réponds toujours en français, avec des phrases complètes et un style narratif clair — comme un rapport d'incident rédigé par un analyste SOC.
+
+Ton objectif : expliquer concrètement ce que fait ce shellcode sur la machine victime.
+- Décris l'enchaînement logique des actions (pas juste une liste de noms d'API).
+- Explique pourquoi chaque étape est là (ex: pourquoi ce XOR, pourquoi ce JMP, pourquoi ces chaînes sur la pile).
+- Traduis les strings et les valeurs numériques en comportement réel.
+- Conclus avec l'effet final sur la machine (accès, persistance, exfiltration, exécution...).
+"""
 
 
 def call_openai(prompt, system):
@@ -33,7 +39,7 @@ def call_openai(prompt, system):
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 700,
+        "max_tokens": 10000,
         "temperature": 0.2,
     }
 
@@ -74,7 +80,7 @@ def call_gemini(prompt, system):
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 700,
+            "maxOutputTokens": 10000,
         },
     }
 

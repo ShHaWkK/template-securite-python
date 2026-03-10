@@ -39,7 +39,7 @@ def _get_provider_name(args_provider: str | None) -> str:
     return "local"
 
 
-def main() -> int:
+def main(argv=None) -> int:
     """Point d'entrée principal du TP2."""
     parser = argparse.ArgumentParser(
         prog="tp2",
@@ -50,7 +50,7 @@ def main() -> int:
     parser.add_argument("--no-llm", action="store_true", help="Désactive l'analyse LLM")
     parser.add_argument("--pdf", action="store_true", help="Génère un rapport PDF")
     parser.add_argument("-o", "--output-dir", default=".", help="Répertoire de sortie pour les PDF")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Lecture des shellcodes depuis le fichier
     shellcodes = read_shellcodes_from_file(args.file)
