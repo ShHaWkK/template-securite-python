@@ -63,7 +63,7 @@ exemples:
 
     args = parser.parse_args()
 
-    # ─── Mode --all ──────────────────────────────────────────────
+    #  Mode --all 
     if args.all:
         run_tp1()
 
@@ -82,7 +82,7 @@ exemples:
         run_tp4()
         return 0
 
-    # ─── Sous-commandes ──────────────────────────────────────────
+    # Sous-commandes 
     if args.tp == "tp1":
         return run_tp1() or 0
 
